@@ -283,7 +283,7 @@
   }
   function onWriteError(e) {
     const code = e && e.code;
-    if (code === 'invalid_argument' || code === 'not_granted' || code === 'revoked') {
+    if (code === 'invalid_argument' || code === 'not_granted' || code === 'revoked' || code === 'permission-denied') {
       if (readOnly) return;
       readOnly = true;
       COLLS.forEach(c => { mirror[c] = new Map(remote[c]); applyDocs(c, remote[c]); });
@@ -295,8 +295,9 @@
       setSync('Une modification n’a pas pu être enregistrée. Vérifie ta connexion et réessaie.');
     }
   }
+  let unsubs = [];
   function subscribe(c) {
-    db.collection(c).onSnapshot(snap => {
+    const off = db.collection(c).onSnapshot(snap => {
       if (!snap.metadata.fromCache) { clearTimeout(loadTimer); if (!readOnly) setSync(''); }
       const next = new Map();
       snap.docs.forEach(d => next.set(d.id, clone(d.data() || {})));
@@ -313,15 +314,101 @@
       if (c === 'players') playersLoaded = true;
       renderAll();
       flush();
-    }, () => {
+    }, e => {
       clearTimeout(loadTimer);
       if (c === 'players') playersLoaded = true;
       renderAll();
-      setSync('Les données partagées sont inaccessibles pour le moment.');
+      setSync(e && e.code === 'permission-denied'
+        ? 'Ce compte n’est pas autorisé à voir les données. Demande à l’organisateur d’ajouter ton adresse e-mail.'
+        : 'Les données partagées sont inaccessibles pour le moment.');
+    });
+    if (typeof off === 'function') unsubs.push(off);
+  }
+
+  /* ---------- Firebase (site autonome) : connexion Google + Firestore ---------- */
+  /* Firestore refuse les tableaux imbriqués : les équipes sont emballées à l'écriture, déballées à la lecture. */
+  function fsEncode(v) {
+    const d = clone(v);
+    if (Array.isArray(d.teams)) d.teams = d.teams.map(t => ({ players: t }));
+    return d;
+  }
+  function fsDecode(d) {
+    const v = clone(d || {});
+    if (Array.isArray(v.teams)) v.teams = v.teams.map(t => (t && Array.isArray(t.players) ? t.players : t));
+    return v;
+  }
+  function firestoreAdapter(fs) {
+    return {
+      collection: c => ({
+        onSnapshot: (next, err) => fs.collection(c).onSnapshot(
+          snap => next({ metadata: snap.metadata, docs: snap.docs.map(d => ({ id: d.id, data: () => fsDecode(d.data()) })) }), err),
+        /* Hors connexion, Firestore met l'écriture en attente : on ne bloque pas la file dessus. */
+        doc: id => ({
+          set: v => { fs.collection(c).doc(id).set(fsEncode(v)).catch(onWriteError); return Promise.resolve(); },
+          delete: () => { fs.collection(c).doc(id).delete().catch(onWriteError); return Promise.resolve(); }
+        })
+      })
+    };
+  }
+  function resetShared() {
+    unsubs.forEach(off => off());
+    unsubs = [];
+    clearTimeout(loadTimer);
+    COLLS.forEach(c => { mirror[c] = new Map(); remote[c] = new Map(); });
+    state.players = []; state.matches = []; state.draw = null; state.period = null;
+    readOnly = false;
+  }
+  function startFirebase(cfg) {
+    const bar = $('#auth'), who = $('#auth-who'), btn = $('#auth-btn');
+    mode = 'loading';
+    state.players = []; state.matches = []; state.draw = null; state.period = null;
+    if (!window.firebase) {
+      playersLoaded = true;
+      setSync('Connexion au serveur impossible. Vérifie ta connexion internet puis recharge la page.');
+      return;
+    }
+    playersLoaded = false;
+    firebase.initializeApp(cfg);
+    const auth = firebase.auth();
+    const fs = firebase.firestore();
+    bar.hidden = false;
+    btn.addEventListener('click', () => {
+      if (auth.currentUser) { auth.signOut(); return; }
+      const provider = new firebase.auth.GoogleAuthProvider();
+      auth.signInWithPopup(provider).catch(e => {
+        if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) return auth.signInWithRedirect(provider);
+        if (e && (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request')) return;
+        setSync('La connexion a échoué. Réessaie.');
+      });
+    });
+    auth.onAuthStateChanged(user => {
+      resetShared();
+      if (!user) {
+        mode = 'loading';
+        playersLoaded = true;
+        who.textContent = '';
+        btn.textContent = 'Se connecter avec Google';
+        renderAll();
+        setSync('Connecte-toi pour voir les joueurs et le classement.');
+        return;
+      }
+      who.textContent = user.displayName || user.email || 'Connecté';
+      btn.textContent = 'Se déconnecter';
+      setSync('');
+      db = firestoreAdapter(fs);
+      mode = 'db';
+      playersLoaded = false;
+      renderAll();
+      $('#sub').textContent = 'Les joueurs, le tirage, le classement. Partagés en direct.';
+      loadTimer = setTimeout(() => setSync('Les données partagées ne répondent pas encore. Ce qui est affiché peut être en retard.'), 10000);
+      COLLS.forEach(subscribe);
     });
   }
   async function startShared() {
-    if (!(window.claude && window.claude.use)) return;
+    if (!(window.claude && window.claude.use)) {
+      if (window.FC_FIREBASE) startFirebase(window.FC_FIREBASE);
+      return;
+    }
     const backup = { players: state.players, matches: state.matches, draw: state.draw, period: state.period };
     mode = 'loading';
     playersLoaded = false;
@@ -796,6 +883,33 @@
       ' Les prochains matchs comptent pour le semestre ' + state.period.sem + ' de la saison ' + state.period.season + '.';
   }
 
+  /* Sauvegarde : tout copier en texte, ou importer un texte copié depuis une autre installation. */
+  function exportText() {
+    return JSON.stringify({ app: 'fc-boissons', version: 1, players: state.players, matches: state.matches, period: state.period });
+  }
+  function importText(text) {
+    let d = null;
+    try { d = JSON.parse(text); } catch (e) { d = null; }
+    if (!d || d.app !== 'fc-boissons' || !Array.isArray(d.players)) return null;
+    const idOk = x => typeof x === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(x);
+    const players = new Map(state.players.map(p => [p.id, p]));
+    let np = 0, nm = 0;
+    d.players.forEach(p => {
+      if (!p || !idOk(p.id)) return;
+      players.set(p.id, { id: p.id, name: String(p.name || '?').slice(0, 30), level: clamp(Math.round(Number(p.level)) || 5, 1, 10), present: !!p.present, pts: cleanPts(p.pts, p.bonus) });
+      np++;
+    });
+    const matches = new Map(state.matches.map(m => [m.id, m]));
+    (Array.isArray(d.matches) ? d.matches : []).forEach(m => { if (m && idOk(m.id) && validMatch(m)) { matches.set(m.id, clone(m)); nm++; } });
+    state.players = [...players.values()];
+    state.matches = [...matches.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const per = cleanPeriod(d.period);
+    if (per) state.period = per;
+    persist();
+    renderAll();
+    return { players: np, matches: nm };
+  }
+
   /* ================= Navigation ================= */
   const VIEWS = ['players', 'match', 'ranking'];
   function show(view) {
@@ -879,6 +993,27 @@
       closeArmed = false;
       clearTimeout(closeTimer);
       closePeriod();
+    });
+
+    $('#backup-copy').addEventListener('click', async ev => {
+      const btn = ev.currentTarget, box = $('#backup-text');
+      const text = exportText();
+      try {
+        await navigator.clipboard.writeText(text);
+        $('#backup-status').textContent = 'Données copiées : ' + plural(state.players.length, 'joueur') + ', ' + plural(state.matches.length, 'match') + '.';
+      } catch (e) {
+        box.value = text; box.focus(); box.select();
+        $('#backup-status').textContent = 'Copie automatique impossible : le texte est dans la zone ci-dessous, copie-le à la main.';
+      }
+      btn.blur();
+    });
+    $('#backup-import').addEventListener('click', () => {
+      const box = $('#backup-text');
+      if (!box.value.trim()) { $('#backup-status').textContent = 'Colle d’abord dans la zone le texte copié depuis l’autre appli.'; box.focus(); return; }
+      const r = importText(box.value);
+      if (!r) { $('#backup-status').textContent = 'Ce texte n’est pas une sauvegarde FC Boissons.'; return; }
+      box.value = '';
+      $('#backup-status').textContent = 'Import terminé : ' + plural(r.players, 'joueur') + ' et ' + plural(r.matches, 'match') + ' ajoutés ou mis à jour.';
     });
 
     $('#bonus-player').addEventListener('change', () => { $('#bonus-value').blur(); renderBonusForm(); });

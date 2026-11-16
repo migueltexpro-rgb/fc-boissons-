@@ -191,6 +191,10 @@ h2 {
 .pick[aria-pressed="true"] { background: var(--soft); font-weight: 600; }
 .pick[aria-pressed="true"] .star { color: var(--gold); }
 
+/* Connexion */
+.auth { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
+.auth span { min-width: 0; overflow-wrap: anywhere; }
+
 /* Classement */
 .period { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .period select { min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }

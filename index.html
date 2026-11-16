@@ -27,6 +27,7 @@
       <p class="sub" id="sub">Les joueurs, le tirage, le classement.</p>
     </div>
   </header>
+  <div class="auth" id="auth" hidden><span id="auth-who"></span><button type="button" class="btn small" id="auth-btn">Se connecter avec Google</button></div>
   <p class="note" id="sync" role="status" hidden></p>
 
   <!-- ===== Joueurs ===== -->
@@ -122,6 +123,17 @@
       </div>
       <p class="status" id="close-status" aria-live="polite"></p>
     </section>
+
+    <section aria-labelledby="h-backup">
+      <h2 id="h-backup">Sauvegarde</h2>
+      <p class="legend">Copie tous les joueurs, matchs et points en texte, pour les garder ou les importer dans une autre installation de l’appli.</p>
+      <div class="tools">
+        <button type="button" class="btn small" id="backup-copy">Copier toutes les données</button>
+        <button type="button" class="btn small" id="backup-import">Importer le texte collé</button>
+      </div>
+      <textarea class="fallback" id="backup-text" aria-label="Texte de sauvegarde" placeholder="Pour importer : colle ici le texte copié, puis touche « Importer le texte collé »."></textarea>
+      <p class="status" id="backup-status" aria-live="polite"></p>
+    </section>
   </div>
 </main>
 
@@ -131,6 +143,10 @@
   <button type="button" data-view="ranking">Classement</button>
 </nav>
 
+<script src="vendor/firebase-app-compat.js"></script>
+<script src="vendor/firebase-auth-compat.js"></script>
+<script src="vendor/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
