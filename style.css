@@ -191,6 +191,10 @@ h2 {
 .pick[aria-pressed="true"] { background: var(--soft); font-weight: 600; }
 .pick[aria-pressed="true"] .star { color: var(--gold); }
 
+/* Tri de la liste */
+.sort { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+.sort select { flex: 1 1 auto; min-width: 0; min-height: 40px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); }
+
 /* Liste collée */
 .paste, .paste-result { display: flex; flex-direction: column; gap: 10px; }
 .paste-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }

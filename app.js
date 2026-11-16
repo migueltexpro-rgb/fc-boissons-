@@ -176,7 +176,7 @@
      (page Claude partagée : joueurs, matchs et tirage sont communs à tous, en direct). */
   const LS_KEY = 'fc-boissons-v1';
   const PREFS_KEY = 'fc-boissons-prefs';
-  const state = { players: [], matches: [], draw: null, period: null, k: 2, kAuto: true, showLevels: true };
+  const state = { players: [], matches: [], draw: null, period: null, k: 2, kAuto: true, showLevels: true, sort: 'alpha' };
   const curPeriod = () => state.period || INITIAL;
   let storageOk = true;
   let mode = 'local';
@@ -191,6 +191,7 @@
     if ([2, 3, 4].includes(s.k)) state.k = s.k;
     if (typeof s.kAuto === 'boolean') state.kAuto = s.kAuto;
     if (typeof s.showLevels === 'boolean') state.showLevels = s.showLevels;
+    if (typeof s.sort === 'string') state.sort = s.sort;
   }
   function load() {
     try {
@@ -207,7 +208,7 @@
   }
   function persist() {
     if (mode !== 'local') {
-      try { localStorage.setItem(PREFS_KEY, JSON.stringify({ k: state.k, kAuto: state.kAuto, showLevels: state.showLevels })); } catch (e) { /* préférences seulement */ }
+      try { localStorage.setItem(PREFS_KEY, JSON.stringify({ k: state.k, kAuto: state.kAuto, showLevels: state.showLevels, sort: state.sort })); } catch (e) { /* préférences seulement */ }
       clearTimeout(flushTimer);
       flushTimer = setTimeout(flush, 300);
       return;
@@ -431,7 +432,7 @@
     loadTimer = setTimeout(() => setSync('Les données partagées ne répondent pas encore. Ce qui est affiché peut être en retard.'), 10000);
     COLLS.forEach(subscribe);
   }
-  function renderAll() { renderPlayers(); renderDraw(); renderSummary(); renderRanking(); }
+  function renderAll() { renderPlayers(true); renderDraw(); renderSummary(); renderRanking(); }
 
   const player = id => state.players.find(p => p.id === id);
 
@@ -481,8 +482,31 @@
     return { el: el, cb: cb, nameIn: nameIn, val: val, dec: dec, inc: inc, del: del };
   }
 
-  function renderPlayers() {
-    const arr = state.players.slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  /* Tri de la liste. L'ordre ne bouge pas pendant qu'on coche (ni quand un autre appareil modifie) :
+     il est recalculé quand on change de tri, d'onglet, ou qu'on ajoute, renomme ou retire un joueur. */
+  const SORTS = {
+    alpha: () => 0,
+    present: (a, b) => (b.present ? 1 : 0) - (a.present ? 1 : 0),
+    played: (a, b, n) => (n.get(b.id) || 0) - (n.get(a.id) || 0),
+    level: (a, b) => b.level - a.level
+  };
+  let orderCache = [];
+  function sortedPlayers(keepOrder) {
+    const byId = new Map(state.players.map(p => [p.id, p]));
+    if (keepOrder && orderCache.length) {
+      const kept = orderCache.filter(id => byId.has(id)).map(id => byId.get(id));
+      const known = new Set(orderCache);
+      return kept.concat(state.players.filter(p => !known.has(p.id)));
+    }
+    const played = new Map();
+    state.matches.forEach(m => m.teams.forEach(t => t.forEach(pl => played.set(pl.id, (played.get(pl.id) || 0) + 1))));
+    const cmp = SORTS[state.sort] || SORTS.alpha;
+    return state.players.slice().sort((a, b) => cmp(a, b, played) || a.name.localeCompare(b.name, 'fr'));
+  }
+  function renderPlayers(keepOrder) {
+    const arr = sortedPlayers(keepOrder);
+    orderCache = arr.map(p => p.id);
+    $('#sort').value = SORTS[state.sort] ? state.sort : 'alpha';
     const ids = new Set(arr.map(p => p.id));
     for (const [id, r] of rows) {
       if (!ids.has(id)) { r.el.remove(); rows.delete(id); }
@@ -506,6 +530,7 @@
     $('#empty').hidden = arr.length !== 0;
     $('#empty').textContent = playersLoaded ? 'Aucun joueur pour le moment. Ajoute ton groupe ci-dessus.' : 'Chargement des joueurs…';
     $('#tools').hidden = arr.length === 0;
+    $('#sort-wrap').hidden = arr.length < 2;
   }
 
   /* ================= Liste collée : cocher les présents depuis un message ================= */
@@ -994,6 +1019,7 @@
   function show(view) {
     if (!VIEWS.includes(view)) view = 'players';
     if (view === 'ranking') renderRanking();
+    if (view === 'players') renderPlayers();
     VIEWS.forEach(v => { $('#view-' + v).hidden = v !== view; });
     document.querySelectorAll('.tabs button').forEach(b => {
       if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -1032,6 +1058,7 @@
     $('#all').addEventListener('click', () => setAll(true));
     $('#none').addEventListener('click', () => setAll(false));
     $('#to-match').addEventListener('click', () => show('match'));
+    $('#sort').addEventListener('change', ev => { state.sort = ev.target.value; persist(); renderPlayers(); });
     $('#paste-open').addEventListener('click', () => {
       const panel = $('#paste-panel');
       panel.hidden = !panel.hidden;
