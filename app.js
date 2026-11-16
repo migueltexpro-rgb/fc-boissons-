@@ -144,28 +144,169 @@
   }
 
   /* ================= État, gardé sur l'appareil ================= */
+  /* Deux modes : « local » (site autonome, données dans le navigateur) et « db »
+     (page Claude partagée : joueurs, matchs et tirage sont communs à tous, en direct). */
   const LS_KEY = 'fc-boissons-v1';
+  const PREFS_KEY = 'fc-boissons-prefs';
   const state = { players: [], matches: [], draw: null, k: 2, kAuto: true, showLevels: true };
   let storageOk = true;
+  let mode = 'local';
+  let db = null;
+  let readOnly = false;
+  let playersLoaded = true;
+  let loadTimer = null;
+  let flushTimer = null;
 
+  function readPrefs(s) {
+    if (!s || typeof s !== 'object') return;
+    if ([2, 3, 4].includes(s.k)) state.k = s.k;
+    if (typeof s.kAuto === 'boolean') state.kAuto = s.kAuto;
+    if (typeof s.showLevels === 'boolean') state.showLevels = s.showLevels;
+  }
   function load() {
     try {
       const s = JSON.parse(localStorage.getItem(LS_KEY));
       if (s && typeof s === 'object') {
         if (Array.isArray(s.players)) state.players = s.players.filter(p => p && p.id);
-        if (Array.isArray(s.matches)) state.matches = s.matches.filter(m => m && Array.isArray(m.teams));
+        if (Array.isArray(s.matches)) state.matches = s.matches.filter(validMatch);
         if (s.draw && Array.isArray(s.draw.teams)) state.draw = s.draw;
-        if ([2, 3, 4].includes(s.k)) state.k = s.k;
-        if (typeof s.kAuto === 'boolean') state.kAuto = s.kAuto;
-        if (typeof s.showLevels === 'boolean') state.showLevels = s.showLevels;
+        readPrefs(s);
       }
+      readPrefs(JSON.parse(localStorage.getItem(PREFS_KEY)));
     } catch (e) { storageOk = false; }
   }
   function persist() {
+    if (mode !== 'local') {
+      try { localStorage.setItem(PREFS_KEY, JSON.stringify({ k: state.k, kAuto: state.kAuto, showLevels: state.showLevels })); } catch (e) { /* préférences seulement */ }
+      clearTimeout(flushTimer);
+      flushTimer = setTimeout(flush, 300);
+      return;
+    }
     try { localStorage.setItem(LS_KEY, JSON.stringify(state)); storageOk = true; }
     catch (e) { storageOk = false; }
-    $('#status').textContent = storageOk ? '' : 'Impossible d’enregistrer sur cet appareil : les changements seront perdus à la fermeture.';
+    setSync(storageOk ? '' : 'Impossible d’enregistrer sur cet appareil : les changements seront perdus à la fermeture.');
   }
+  function setSync(text) {
+    const el = $('#sync');
+    el.textContent = text || '';
+    el.hidden = !text;
+  }
+  function validMatch(m) {
+    return m && Array.isArray(m.teams) && m.teams.length >= 2 && m.teams.length <= 4 && m.teams.every(Array.isArray) &&
+      Number.isInteger(m.winner) && m.winner >= -1 && m.winner < m.teams.length;
+  }
+
+  /* ---------- synchronisation partagée ---------- */
+  const COLLS = ['players', 'matches', 'state'];
+  const mirror = { players: new Map(), matches: new Map(), state: new Map() };   /* ce que le serveur a (ou va recevoir) */
+  const remote = { players: new Map(), matches: new Map(), state: new Map() };   /* dernier état reçu du serveur */
+  const chains = new Map();
+  const clone = v => JSON.parse(JSON.stringify(v));
+  function canon(v) {
+    if (v === undefined) return '';
+    return JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x)
+      ? Object.keys(x).sort().reduce((o, kk) => { o[kk] = x[kk]; return o; }, {}) : x);
+  }
+  function localDocs(c) {
+    const m = new Map();
+    if (c === 'players') state.players.forEach(p => m.set(p.id, { name: p.name, level: p.level, present: !!p.present }));
+    else if (c === 'matches') state.matches.forEach(x => { const d = Object.assign({}, x); delete d.id; m.set(x.id, d); });
+    else if (state.draw) m.set('draw', state.draw);
+    return m;
+  }
+  function applyDocs(c, m) {
+    if (c === 'players') {
+      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present }));
+    } else if (c === 'matches') {
+      state.matches = [...m].map(([id, d]) => Object.assign(clone(d), { id: id })).filter(validMatch)
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    } else {
+      const d = m.get('draw');
+      state.draw = d && Array.isArray(d.teams) && d.teams.length >= 2 && d.teams.length <= 4 ? clone(d) : null;
+    }
+  }
+  function flush() {
+    if (mode !== 'db' || readOnly) return;
+    COLLS.forEach(c => {
+      const loc = localDocs(c), mir = mirror[c];
+      new Set([...loc.keys(), ...mir.keys()]).forEach(id => {
+        const l = loc.get(id);
+        if (canon(l) === canon(mir.get(id))) return;
+        if (l === undefined) mir.delete(id); else mir.set(id, clone(l));
+        const key = c + '/' + id;
+        /* Une écriture à la fois par document ; chacune envoie la valeur la plus récente. */
+        chains.set(key, (chains.get(key) || Promise.resolve()).then(() => {
+          const v = mirror[c].get(id);
+          const ref = db.collection(c).doc(id);
+          return v === undefined ? ref.delete() : ref.set(v);
+        }).catch(onWriteError));
+      });
+    });
+  }
+  function onWriteError(e) {
+    const code = e && e.code;
+    if (code === 'invalid_argument' || code === 'not_granted' || code === 'revoked') {
+      if (readOnly) return;
+      readOnly = true;
+      COLLS.forEach(c => { mirror[c] = new Map(remote[c]); applyDocs(c, remote[c]); });
+      renderAll();
+      setSync('Tu peux consulter, mais pas modifier : demande au propriétaire de la page de te donner le droit de modification.');
+    } else if (code === 'quota_exceeded') {
+      setSync('L’espace partagé est plein : supprime d’anciens matchs pour pouvoir enregistrer.');
+    } else {
+      setSync('Une modification n’a pas pu être enregistrée. Vérifie ta connexion et réessaie.');
+    }
+  }
+  function subscribe(c) {
+    db.collection(c).onSnapshot(snap => {
+      if (!snap.metadata.fromCache) { clearTimeout(loadTimer); if (!readOnly) setSync(''); }
+      const next = new Map();
+      snap.docs.forEach(d => next.set(d.id, clone(d.data() || {})));
+      /* Fusion : ce qu'on vient de modifier ici et qui n'est pas encore parti reste prioritaire. */
+      const loc = localDocs(c), mir = mirror[c], merged = new Map();
+      new Set([...loc.keys(), ...mir.keys(), ...next.keys()]).forEach(id => {
+        const l = loc.get(id);
+        const v = canon(l) === canon(mir.get(id)) ? next.get(id) : l;
+        if (v !== undefined) merged.set(id, v);
+      });
+      remote[c] = next;
+      mirror[c] = new Map(next);
+      applyDocs(c, merged);
+      if (c === 'players') playersLoaded = true;
+      renderAll();
+      flush();
+    }, () => {
+      clearTimeout(loadTimer);
+      if (c === 'players') playersLoaded = true;
+      renderAll();
+      setSync('Les données partagées sont inaccessibles pour le moment.');
+    });
+  }
+  async function startShared() {
+    if (!(window.claude && window.claude.use)) return;
+    const backup = { players: state.players, matches: state.matches, draw: state.draw };
+    mode = 'loading';
+    playersLoaded = false;
+    state.players = []; state.matches = []; state.draw = null;
+    let d = null;
+    try { d = await window.claude.use('db'); } catch (e) { d = null; }
+    if (!d) {
+      mode = 'local';
+      playersLoaded = true;
+      state.players = backup.players.concat(state.players);
+      state.matches = backup.matches.concat(state.matches);
+      state.draw = state.draw || backup.draw;
+      renderAll();
+      return;
+    }
+    db = d;
+    mode = 'db';
+    $('#sub').textContent = 'Les joueurs, le tirage, le classement. Partagés en direct.';
+    loadTimer = setTimeout(() => setSync('Les données partagées ne répondent pas encore. Ce qui est affiché peut être en retard.'), 10000);
+    COLLS.forEach(subscribe);
+  }
+  function renderAll() { renderPlayers(); renderDraw(); renderSummary(); renderRanking(); }
+
   const player = id => state.players.find(p => p.id === id);
 
   /* ================= Joueurs ================= */
@@ -237,6 +378,7 @@
     });
     list.hidden = arr.length === 0;
     $('#empty').hidden = arr.length !== 0;
+    $('#empty').textContent = playersLoaded ? 'Aucun joueur pour le moment. Ajoute ton groupe ci-dessus.' : 'Chargement des joueurs…';
     $('#tools').hidden = arr.length === 0;
   }
 
@@ -593,10 +735,8 @@
     document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
     window.addEventListener('hashchange', () => show(location.hash.slice(1)));
 
-    renderPlayers();
-    renderDraw();
-    renderSummary();
-    renderRanking();
+    startShared();
+    renderAll();
     show(location.hash.slice(1) || 'players');
 
     if ('serviceWorker' in navigator && location.protocol === 'https:') {

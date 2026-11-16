@@ -1,5 +1,5 @@
 /* Réseau d'abord, cache en secours : l'appli reste utilisable sans connexion au bord du terrain. */
-const CACHE = 'fc-boissons-v2';
+const CACHE = 'fc-boissons-v3';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'icon.svg', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {
