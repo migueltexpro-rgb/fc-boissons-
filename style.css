@@ -109,6 +109,11 @@ h2 {
   flex: 1 1 160px; min-width: 0; min-height: 44px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--surface);
 }
+.add input[type="number"] {
+  width: 84px; min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+#bonus-player { flex: 1 1 160px; min-width: 0; }
 .add select { min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
 .add .primary-sm {
   min-height: 44px; padding: 8px 18px; border-radius: 10px; border: 0; cursor: pointer;

@@ -83,8 +83,19 @@
         <h2 id="h-rank">Classement MVP</h2>
         <span class="count" id="match-count"></span>
       </div>
-      <p class="legend">À 2 équipes, les 3 MVP du match sont élus par vote. À 3 ou 4 équipes, tous les joueurs de l’équipe gagnante sont MVP. À égalité, le plus de victoires passe devant.</p>
+      <p class="legend">Être MVP d’un match rapporte 1 point. À 2 équipes, les 3 MVP sont élus par vote ; à 3 ou 4 équipes, toute l’équipe gagnante est MVP. À égalité, le plus de victoires passe devant.</p>
       <div id="ranking"></div>
+    </section>
+
+    <section aria-labelledby="h-bonus" id="bonus-sec" hidden>
+      <h2 id="h-bonus">Points de départ</h2>
+      <p class="legend">Saison déjà commencée ? Indique les points MVP qu’un joueur avait déjà : ils s’ajoutent à ceux gagnés dans l’appli.</p>
+      <form class="add" id="bonus-form" autocomplete="off">
+        <select id="bonus-player" aria-label="Joueur"></select>
+        <input type="number" id="bonus-value" min="0" max="999" step="1" inputmode="numeric" aria-label="Points MVP de départ" required>
+        <button type="submit" class="primary-sm">Enregistrer</button>
+      </form>
+      <p class="status" id="bonus-status" aria-live="polite"></p>
     </section>
 
     <section aria-labelledby="h-hist" id="history-sec" hidden>

@@ -86,13 +86,21 @@
       m.teams.forEach((team, i) => {
         team.forEach(pl => {
           let s = byId.get(pl.id);
-          if (!s) { s = { id: pl.id, name: pl.name, played: 0, wins: 0, mvp: 0 }; byId.set(pl.id, s); }
+          if (!s) { s = { id: pl.id, name: pl.name, played: 0, wins: 0, mvp: 0, bonus: 0 }; byId.set(pl.id, s); }
           s.name = pl.name;
           s.played++;
           if (m.winner === i) s.wins++;
           if (mvps.has(pl.id)) s.mvp++;
         });
       });
+    });
+    /* Points de départ saisis à la main (saison déjà commencée). */
+    players.forEach(p => {
+      if (!(p.bonus > 0)) return;
+      let s = byId.get(p.id);
+      if (!s) { s = { id: p.id, name: p.name, played: 0, wins: 0, mvp: 0, bonus: 0 }; byId.set(p.id, s); }
+      s.bonus = p.bonus;
+      s.mvp += p.bonus;
     });
     const rows = [...byId.values()].map(s => {
       const cur = current.get(s.id);
@@ -209,14 +217,18 @@
   }
   function localDocs(c) {
     const m = new Map();
-    if (c === 'players') state.players.forEach(p => m.set(p.id, { name: p.name, level: p.level, present: !!p.present }));
+    if (c === 'players') state.players.forEach(p => {
+      const d = { name: p.name, level: p.level, present: !!p.present };
+      if (p.bonus > 0) d.bonus = p.bonus;
+      m.set(p.id, d);
+    });
     else if (c === 'matches') state.matches.forEach(x => { const d = Object.assign({}, x); delete d.id; m.set(x.id, d); });
     else if (state.draw) m.set('draw', state.draw);
     return m;
   }
   function applyDocs(c, m) {
     if (c === 'players') {
-      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present }));
+      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present, bonus: clamp(Math.round(Number(d.bonus)) || 0, 0, 999) }));
     } else if (c === 'matches') {
       state.matches = [...m].map(([id, d]) => Object.assign(clone(d), { id: id })).filter(validMatch)
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -625,7 +637,8 @@
     const n = state.matches.length;
     $('#match-count').textContent = plural(n, 'match') + ' joué' + (n > 1 ? 's' : '');
     $('#history-sec').hidden = n === 0;
-    if (n === 0) {
+    renderBonusForm();
+    if (n === 0 && !state.players.some(p => p.bonus > 0)) {
       box.append(h('div', { class: 'empty' }, 'Pas encore de match. Génère les équipes, puis désigne les vainqueurs à la fin du match : le classement se remplit tout seul.'));
       return;
     }
@@ -636,14 +649,14 @@
       h('div', { class: 'who' },
         h('div', { class: 'lab' }, leaders.length > 1 ? 'MVP ex æquo' : 'MVP'),
         h('div', { class: 'name' }, leaders.map(r => r.name).join(' · ')),
-        h('div', { class: 'stat' }, leaders[0].mvp + ' fois MVP · ' + plural(leaders[0].wins, 'victoire') + ' en ' + plural(leaders[0].played, 'match'))
+        h('div', { class: 'stat' }, plural(leaders[0].mvp, 'point') + ' MVP · ' + plural(leaders[0].wins, 'victoire') + ' en ' + plural(leaders[0].played, 'match'))
       )
     ));
     box.append(h('div', { class: 'table-wrap' }, h('table', null,
       h('thead', null, h('tr', null,
         h('th', { scope: 'col' }, '#'), h('th', { scope: 'col' }, 'Joueur'),
         h('th', { scope: 'col', title: 'Matchs joués' }, 'J'), h('th', { scope: 'col', title: 'Victoires' }, 'V'),
-        h('th', { scope: 'col', title: 'Nombre de fois MVP' }, 'MVP'))),
+        h('th', { scope: 'col', title: 'Points MVP' }, 'MVP'))),
       h('tbody', null, table.map(r => h('tr', { class: r.rank === 1 && r.mvp > 0 ? 'first' : '' },
         h('td', null, r.rank),
         h('td', null, r.name, r.gone ? h('span', { class: 'gone' }, ' (retiré)') : null),
@@ -668,10 +681,29 @@
     });
   }
 
+  /* Points MVP de départ : pour reprendre une saison déjà commencée. */
+  let bonusSig = null;
+  function renderBonusForm() {
+    const sel = $('#bonus-player'), input = $('#bonus-value');
+    const arr = state.players.slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+    $('#bonus-sec').hidden = arr.length === 0;
+    const sig = arr.map(p => p.id + ':' + p.name).join('|');
+    if (sig !== bonusSig) {
+      bonusSig = sig;
+      const keep = sel.value;
+      sel.textContent = '';
+      arr.forEach(p => sel.append(h('option', { value: p.id }, p.name)));
+      if (arr.some(p => p.id === keep)) sel.value = keep;
+    }
+    const p = player(sel.value);
+    if (p && document.activeElement !== input) input.value = p.bonus || 0;
+  }
+
   /* ================= Navigation ================= */
   const VIEWS = ['players', 'match', 'ranking'];
   function show(view) {
     if (!VIEWS.includes(view)) view = 'players';
+    if (view === 'ranking') renderRanking();
     VIEWS.forEach(v => { $('#view-' + v).hidden = v !== view; });
     document.querySelectorAll('.tabs button').forEach(b => {
       if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -717,7 +749,7 @@
       const label = 'Remettre le classement à zéro';
       if (!confirmReset) {
         confirmReset = true;
-        btn.textContent = 'Confirmer : effacer tous les matchs';
+        btn.textContent = 'Confirmer : effacer matchs et points de départ';
         clearTimeout(confirmTimer);
         confirmTimer = setTimeout(() => { confirmReset = false; btn.textContent = label; }, 4000);
         return;
@@ -726,10 +758,25 @@
       clearTimeout(confirmTimer);
       btn.textContent = label;
       state.matches = [];
+      state.players.forEach(p => { p.bonus = 0; });
       if (state.draw) { state.draw.recorded = null; state.draw.vote = null; }
       persist();
       renderEnd();
       renderRanking();
+    });
+
+    $('#bonus-player').addEventListener('change', () => { $('#bonus-value').blur(); renderBonusForm(); });
+    $('#bonus-form').addEventListener('submit', ev => {
+      ev.preventDefault();
+      const p = player($('#bonus-player').value);
+      const input = $('#bonus-value');
+      const v = Math.round(Number(input.value));
+      if (!p || !Number.isFinite(v) || v < 0 || v > 999) { $('#bonus-status').textContent = 'Indique un nombre de points entre 0 et 999.'; return; }
+      p.bonus = v;
+      persist();
+      input.blur();
+      renderRanking();
+      $('#bonus-status').textContent = p.name + ' : ' + plural(v, 'point') + ' de départ enregistré' + (v > 1 ? 's' : '') + '.';
     });
 
     document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
