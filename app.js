@@ -488,7 +488,8 @@
     alpha: () => 0,
     present: (a, b) => (b.present ? 1 : 0) - (a.present ? 1 : 0),
     played: (a, b, n) => (n.get(b.id) || 0) - (n.get(a.id) || 0),
-    level: (a, b) => b.level - a.level
+    level: (a, b) => b.level - a.level,
+    mvp: (a, b, n, rank) => (rank.get(a.id) || 1e9) - (rank.get(b.id) || 1e9)
   };
   let orderCache = [];
   function sortedPlayers(keepOrder) {
@@ -501,7 +502,14 @@
     const played = new Map();
     state.matches.forEach(m => m.teams.forEach(t => t.forEach(pl => played.set(pl.id, (played.get(pl.id) || 0) + 1))));
     const cmp = SORTS[state.sort] || SORTS.alpha;
-    return state.players.slice().sort((a, b) => cmp(a, b, played) || a.name.localeCompare(b.name, 'fr'));
+    /* Rang au classement MVP du semestre en cours (même ordre que l'onglet Classement). */
+    const rank = new Map();
+    if (state.sort === 'mvp') {
+      const cur = curPeriod();
+      const ms = state.matches.filter(m => matchSeason(m) === cur.season && matchSem(m) === cur.sem);
+      standings(ms, state.players, [pkey(cur.season, cur.sem)]).forEach((r, i) => rank.set(r.id, i + 1));
+    }
+    return state.players.slice().sort((a, b) => cmp(a, b, played, rank) || a.name.localeCompare(b.name, 'fr'));
   }
   function renderPlayers(keepOrder) {
     const arr = sortedPlayers(keepOrder);
