@@ -74,11 +74,31 @@
   /* ================= Classement ================= */
   /* MVP : à 2 équipes, 3 joueurs élus par vote ; à 3 ou 4 équipes, toute l'équipe gagnante. */
   const MVP_VOTES = 3;
+  /* Périodes : une saison = 2 semestres. Les données saisies avant cette notion comptent pour le semestre 2 de 2026. */
+  const INITIAL = { season: '2026', sem: 2 };
+  const pkey = (season, sem) => season + '-' + sem;
+  const matchSeason = m => String(m.season || INITIAL.season);
+  const matchSem = m => (m.sem === 1 || m.sem === 2 ? m.sem : INITIAL.sem);
+  function cleanPts(raw, legacyBonus) {
+    const out = {};
+    if (raw && typeof raw === 'object') Object.keys(raw).forEach(k => {
+      const v = Math.round(Number(raw[k]));
+      if (/^[A-Za-z0-9 ._-]{1,20}-[12]$/.test(k) && v > 0) out[k] = Math.min(v, 999);
+    });
+    const b = Math.round(Number(legacyBonus));
+    const k0 = pkey(INITIAL.season, INITIAL.sem);
+    if (b > 0 && !(k0 in out)) out[k0] = Math.min(b, 999);
+    return out;
+  }
+  function cleanPeriod(d) {
+    return d && typeof d.season === 'string' && /^[A-Za-z0-9 ._-]{1,20}$/.test(d.season) && (d.sem === 1 || d.sem === 2)
+      ? { season: d.season, sem: d.sem } : null;
+  }
   function mvpsOf(m) {
     if (Array.isArray(m.mvps)) return m.mvps;
     return m.teams.length > 2 && m.winner !== -1 ? m.teams[m.winner].map(p => p.id) : [];
   }
-  function standings(matches, players) {
+  function standings(matches, players, keys) {
     const byId = new Map();
     const current = new Map(players.map(p => [p.id, p]));
     matches.forEach(m => {
@@ -86,7 +106,7 @@
       m.teams.forEach((team, i) => {
         team.forEach(pl => {
           let s = byId.get(pl.id);
-          if (!s) { s = { id: pl.id, name: pl.name, played: 0, wins: 0, mvp: 0, bonus: 0 }; byId.set(pl.id, s); }
+          if (!s) { s = { id: pl.id, name: pl.name, played: 0, wins: 0, mvp: 0 }; byId.set(pl.id, s); }
           s.name = pl.name;
           s.played++;
           if (m.winner === i) s.wins++;
@@ -94,13 +114,13 @@
         });
       });
     });
-    /* Points de départ saisis à la main (saison déjà commencée). */
+    /* Points saisis à la main pour les périodes demandées. */
     players.forEach(p => {
-      if (!(p.bonus > 0)) return;
+      const extra = keys.reduce((t, k) => t + ((p.pts && p.pts[k]) || 0), 0);
+      if (!extra) return;
       let s = byId.get(p.id);
-      if (!s) { s = { id: p.id, name: p.name, played: 0, wins: 0, mvp: 0, bonus: 0 }; byId.set(p.id, s); }
-      s.bonus = p.bonus;
-      s.mvp += p.bonus;
+      if (!s) { s = { id: p.id, name: p.name, played: 0, wins: 0, mvp: 0 }; byId.set(p.id, s); }
+      s.mvp += extra;
     });
     const rows = [...byId.values()].map(s => {
       const cur = current.get(s.id);
@@ -156,7 +176,8 @@
      (page Claude partagée : joueurs, matchs et tirage sont communs à tous, en direct). */
   const LS_KEY = 'fc-boissons-v1';
   const PREFS_KEY = 'fc-boissons-prefs';
-  const state = { players: [], matches: [], draw: null, k: 2, kAuto: true, showLevels: true };
+  const state = { players: [], matches: [], draw: null, period: null, k: 2, kAuto: true, showLevels: true };
+  const curPeriod = () => state.period || INITIAL;
   let storageOk = true;
   let mode = 'local';
   let db = null;
@@ -175,7 +196,8 @@
     try {
       const s = JSON.parse(localStorage.getItem(LS_KEY));
       if (s && typeof s === 'object') {
-        if (Array.isArray(s.players)) state.players = s.players.filter(p => p && p.id);
+        if (Array.isArray(s.players)) state.players = s.players.filter(p => p && p.id).map(p => { p.pts = cleanPts(p.pts, p.bonus); delete p.bonus; return p; });
+        state.period = cleanPeriod(s.period);
         if (Array.isArray(s.matches)) state.matches = s.matches.filter(validMatch);
         if (s.draw && Array.isArray(s.draw.teams)) state.draw = s.draw;
         readPrefs(s);
@@ -219,22 +241,26 @@
     const m = new Map();
     if (c === 'players') state.players.forEach(p => {
       const d = { name: p.name, level: p.level, present: !!p.present };
-      if (p.bonus > 0) d.bonus = p.bonus;
+      if (p.pts && Object.keys(p.pts).length) d.pts = p.pts;
       m.set(p.id, d);
     });
     else if (c === 'matches') state.matches.forEach(x => { const d = Object.assign({}, x); delete d.id; m.set(x.id, d); });
-    else if (state.draw) m.set('draw', state.draw);
+    else {
+      if (state.draw) m.set('draw', state.draw);
+      if (state.period) m.set('period', state.period);
+    }
     return m;
   }
   function applyDocs(c, m) {
     if (c === 'players') {
-      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present, bonus: clamp(Math.round(Number(d.bonus)) || 0, 0, 999) }));
+      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present, pts: cleanPts(d.pts, d.bonus) }));
     } else if (c === 'matches') {
       state.matches = [...m].map(([id, d]) => Object.assign(clone(d), { id: id })).filter(validMatch)
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
     } else {
       const d = m.get('draw');
       state.draw = d && Array.isArray(d.teams) && d.teams.length >= 2 && d.teams.length <= 4 ? clone(d) : null;
+      state.period = cleanPeriod(m.get('period'));
     }
   }
   function flush() {
@@ -296,10 +322,10 @@
   }
   async function startShared() {
     if (!(window.claude && window.claude.use)) return;
-    const backup = { players: state.players, matches: state.matches, draw: state.draw };
+    const backup = { players: state.players, matches: state.matches, draw: state.draw, period: state.period };
     mode = 'loading';
     playersLoaded = false;
-    state.players = []; state.matches = []; state.draw = null;
+    state.players = []; state.matches = []; state.draw = null; state.period = null;
     let d = null;
     try { d = await window.claude.use('db'); } catch (e) { d = null; }
     if (!d) {
@@ -308,6 +334,7 @@
       state.players = backup.players.concat(state.players);
       state.matches = backup.matches.concat(state.matches);
       state.draw = state.draw || backup.draw;
+      state.period = backup.period;
       renderAll();
       return;
     }
@@ -505,6 +532,8 @@
       date: new Date().toISOString(),
       winner: winner,
       mvps: mvps,
+      season: curPeriod().season,
+      sem: curPeriod().sem,
       teams: draw.teams.map(t => t.map(p => ({ id: p.id, name: p.name })))
     };
     state.matches.push(m);
@@ -629,45 +658,86 @@
   }
 
   /* ================= Classement ================= */
-  let confirmReset = false, confirmTimer = null;
+  const rv = { season: null, scope: null };   /* période affichée ; null = la période en cours */
+  function viewed() {
+    const cur = curPeriod();
+    const season = rv.season || cur.season;
+    const scope = rv.scope || String(cur.sem);
+    const sems = scope === 'year' ? [1, 2] : [Number(scope)];
+    return {
+      season: season, scope: scope, sems: sems,
+      keys: sems.map(x => pkey(season, x)),
+      label: scope === 'year' ? 'Année ' + season : 'Semestre ' + scope + ' · ' + season,
+      isCurrent: season === cur.season && scope === String(cur.sem)
+    };
+  }
+  function seasonsKnown() {
+    const set = new Set([curPeriod().season]);
+    state.matches.forEach(m => set.add(matchSeason(m)));
+    state.players.forEach(p => Object.keys(p.pts || {}).forEach(k => set.add(k.slice(0, -2))));
+    return [...set].sort((a, b) => a.localeCompare(b, 'fr', { numeric: true }));
+  }
+  function nextSeason(label) { return /^\d+$/.test(label) ? String(Number(label) + 1) : (label + ' bis').slice(0, 20); }
 
   function renderRanking() {
     const box = $('#ranking');
     box.textContent = '';
-    const n = state.matches.length;
+    const cur = curPeriod();
+    const v = viewed();
+    const ms = state.matches.filter(m => matchSeason(m) === v.season && v.sems.includes(matchSem(m)));
+    const n = ms.length;
+
+    /* Sélecteurs de période */
+    const seasons = seasonsKnown();
+    const ssel = $('#rank-season');
+    const ssig = seasons.join('|');
+    if (ssel.dataset.sig !== ssig) {
+      ssel.dataset.sig = ssig;
+      ssel.textContent = '';
+      seasons.forEach(x => ssel.append(h('option', { value: x }, 'Saison ' + x)));
+    }
+    ssel.value = v.season;
+    ssel.hidden = seasons.length < 2;
+    $('#rank-seg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.scope === v.scope)));
+
     $('#match-count').textContent = plural(n, 'match') + ' joué' + (n > 1 ? 's' : '');
     $('#history-sec').hidden = n === 0;
+    $('#reset-season').hidden = v.scope === 'year';
     renderBonusForm();
-    if (n === 0 && !state.players.some(p => p.bonus > 0)) {
-      box.append(h('div', { class: 'empty' }, 'Pas encore de match. Génère les équipes, puis désigne les vainqueurs à la fin du match : le classement se remplit tout seul.'));
-      return;
+    renderClose();
+
+    const table = standings(ms, state.players, v.keys);
+    if (!table.length) {
+      box.append(h('div', { class: 'empty' }, v.isCurrent
+        ? 'Pas encore de match ce semestre. Génère les équipes, puis désigne les vainqueurs à la fin du match : le classement se remplit tout seul.'
+        : 'Rien d’enregistré pour cette période.'));
+    } else {
+      const leaders = table.filter(r => r.rank === 1 && r.mvp > 0);
+      if (leaders.length) box.append(h('div', { class: 'podium' },
+        h('span', { class: 'medal', 'aria-hidden': 'true' }, '🏆'),
+        h('div', { class: 'who' },
+          h('div', { class: 'lab' }, (leaders.length > 1 ? 'MVP ex æquo' : 'MVP') + ' · ' + v.label),
+          h('div', { class: 'name' }, leaders.map(r => r.name).join(' · ')),
+          h('div', { class: 'stat' }, plural(leaders[0].mvp, 'point') + ' MVP · ' + plural(leaders[0].wins, 'victoire') + ' en ' + plural(leaders[0].played, 'match'))
+        )
+      ));
+      box.append(h('div', { class: 'table-wrap' }, h('table', null,
+        h('thead', null, h('tr', null,
+          h('th', { scope: 'col' }, '#'), h('th', { scope: 'col' }, 'Joueur'),
+          h('th', { scope: 'col', title: 'Matchs joués' }, 'J'), h('th', { scope: 'col', title: 'Victoires' }, 'V'),
+          h('th', { scope: 'col', title: 'Points MVP' }, 'MVP'))),
+        h('tbody', null, table.map(r => h('tr', { class: r.rank === 1 && r.mvp > 0 ? 'first' : '' },
+          h('td', null, r.rank),
+          h('td', null, r.name, r.gone ? h('span', { class: 'gone' }, ' (retiré)') : null),
+          h('td', null, r.played), h('td', null, r.wins),
+          h('td', { class: 'pts' }, r.mvp)
+        )))
+      )));
     }
-    const table = standings(state.matches, state.players);
-    const leaders = table.filter(r => r.rank === 1 && r.mvp > 0);
-    if (leaders.length) box.append(h('div', { class: 'podium' },
-      h('span', { class: 'medal', 'aria-hidden': 'true' }, '🏆'),
-      h('div', { class: 'who' },
-        h('div', { class: 'lab' }, leaders.length > 1 ? 'MVP ex æquo' : 'MVP'),
-        h('div', { class: 'name' }, leaders.map(r => r.name).join(' · ')),
-        h('div', { class: 'stat' }, plural(leaders[0].mvp, 'point') + ' MVP · ' + plural(leaders[0].wins, 'victoire') + ' en ' + plural(leaders[0].played, 'match'))
-      )
-    ));
-    box.append(h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null,
-        h('th', { scope: 'col' }, '#'), h('th', { scope: 'col' }, 'Joueur'),
-        h('th', { scope: 'col', title: 'Matchs joués' }, 'J'), h('th', { scope: 'col', title: 'Victoires' }, 'V'),
-        h('th', { scope: 'col', title: 'Points MVP' }, 'MVP'))),
-      h('tbody', null, table.map(r => h('tr', { class: r.rank === 1 && r.mvp > 0 ? 'first' : '' },
-        h('td', null, r.rank),
-        h('td', null, r.name, r.gone ? h('span', { class: 'gone' }, ' (retiré)') : null),
-        h('td', null, r.played), h('td', null, r.wins),
-        h('td', { class: 'pts' }, r.mvp)
-      )))
-    )));
 
     const hist = $('#history');
     hist.textContent = '';
-    state.matches.slice().reverse().forEach(m => {
+    ms.slice().reverse().forEach(m => {
       const when = new Date(m.date).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
       const mv = namesOf(m, mvpsOf(m));
       const who = mv.length ? 'MVP : ' + mv.join(', ') : 'pas de MVP';
@@ -681,12 +751,14 @@
     });
   }
 
-  /* Points MVP de départ : pour reprendre une saison déjà commencée. */
+  /* Points saisis à la main pour le semestre affiché (matchs joués hors appli). */
   let bonusSig = null;
   function renderBonusForm() {
+    const v = viewed();
     const sel = $('#bonus-player'), input = $('#bonus-value');
     const arr = state.players.slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
-    $('#bonus-sec').hidden = arr.length === 0;
+    $('#bonus-sec').hidden = arr.length === 0 || v.scope === 'year';
+    $('#bonus-legend').textContent = 'Points MVP gagnés hors de l’appli pendant le ' + v.label.toLowerCase().replace(' · ', ' ') + ' : ils s’ajoutent à ceux des matchs enregistrés ici.';
     const sig = arr.map(p => p.id + ':' + p.name).join('|');
     if (sig !== bonusSig) {
       bonusSig = sig;
@@ -696,7 +768,32 @@
       if (arr.some(p => p.id === keep)) sel.value = keep;
     }
     const p = player(sel.value);
-    if (p && document.activeElement !== input) input.value = p.bonus || 0;
+    if (p && document.activeElement !== input) input.value = (p.pts && p.pts[v.keys[0]]) || 0;
+  }
+
+  /* Clôture : rien n'est effacé, les prochains matchs comptent pour la période suivante. */
+  let closeArmed = false, closeTimer = null;
+  function closeLabel() {
+    const cur = curPeriod();
+    return cur.sem === 1 ? 'Clôturer le semestre 1' : 'Clôturer le semestre 2 et la saison ' + cur.season;
+  }
+  function renderClose() {
+    const cur = curPeriod();
+    $('#close-now').textContent = 'Période en cours : semestre ' + cur.sem + ' de la saison ' + cur.season + '. ' + (cur.sem === 1
+      ? 'À la clôture, les prochains matchs compteront pour le semestre 2.'
+      : 'À la clôture, une nouvelle saison ' + nextSeason(cur.season) + ' démarre au semestre 1. Les classements passés restent consultables.');
+    if (!closeArmed) $('#close-period').textContent = closeLabel();
+  }
+  function closePeriod() {
+    const cur = curPeriod();
+    state.period = cur.sem === 1 ? { season: cur.season, sem: 2 } : { season: nextSeason(cur.season), sem: 1 };
+    if (state.draw) { state.draw.recorded = null; state.draw.vote = null; }
+    rv.season = null; rv.scope = null;
+    persist();
+    renderEnd();
+    renderRanking();
+    $('#close-status').textContent = (cur.sem === 1 ? 'Semestre 1 clôturé.' : 'Saison ' + cur.season + ' clôturée.') +
+      ' Les prochains matchs comptent pour le semestre ' + state.period.sem + ' de la saison ' + state.period.season + '.';
   }
 
   /* ================= Navigation ================= */
@@ -731,7 +828,7 @@
       const input = $('#new-name');
       const name = input.value.trim();
       if (!name) return;
-      state.players.push({ id: newId('p'), name: name, level: Number(sel.value), present: true });
+      state.players.push({ id: newId('p'), name: name, level: Number(sel.value), present: true, pts: {} });
       persist();
       renderPlayers();
       renderSummary();
@@ -744,12 +841,13 @@
     $('#to-match').addEventListener('click', () => show('match'));
     $('#go').addEventListener('click', runDraw);
 
+    let confirmReset = false, confirmTimer = null;
     $('#reset-season').addEventListener('click', ev => {
       const btn = ev.currentTarget;
-      const label = 'Remettre le classement à zéro';
+      const label = 'Remettre ce semestre à zéro';
       if (!confirmReset) {
         confirmReset = true;
-        btn.textContent = 'Confirmer : effacer matchs et points de départ';
+        btn.textContent = 'Confirmer : effacer les matchs et points de ce semestre';
         clearTimeout(confirmTimer);
         confirmTimer = setTimeout(() => { confirmReset = false; btn.textContent = label; }, 4000);
         return;
@@ -757,12 +855,30 @@
       confirmReset = false;
       clearTimeout(confirmTimer);
       btn.textContent = label;
-      state.matches = [];
-      state.players.forEach(p => { p.bonus = 0; });
-      if (state.draw) { state.draw.recorded = null; state.draw.vote = null; }
+      const v = viewed();
+      if (v.scope === 'year') return;
+      state.matches = state.matches.filter(m => !(matchSeason(m) === v.season && matchSem(m) === v.sems[0]));
+      state.players.forEach(p => { if (p.pts) delete p.pts[v.keys[0]]; });
+      if (state.draw && !state.matches.some(m => m.id === state.draw.recorded)) { state.draw.recorded = null; state.draw.vote = null; }
       persist();
       renderEnd();
       renderRanking();
+    });
+
+    $('#rank-seg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { rv.scope = b.dataset.scope; $('#bonus-status').textContent = ''; renderRanking(); }));
+    $('#rank-season').addEventListener('change', ev => { rv.season = ev.target.value; renderRanking(); });
+    $('#close-period').addEventListener('click', ev => {
+      const btn = ev.currentTarget;
+      if (!closeArmed) {
+        closeArmed = true;
+        btn.textContent = 'Confirmer : ' + closeLabel().toLowerCase();
+        clearTimeout(closeTimer);
+        closeTimer = setTimeout(() => { closeArmed = false; btn.textContent = closeLabel(); }, 4000);
+        return;
+      }
+      closeArmed = false;
+      clearTimeout(closeTimer);
+      closePeriod();
     });
 
     $('#bonus-player').addEventListener('change', () => { $('#bonus-value').blur(); renderBonusForm(); });
@@ -770,13 +886,15 @@
       ev.preventDefault();
       const p = player($('#bonus-player').value);
       const input = $('#bonus-value');
-      const v = Math.round(Number(input.value));
-      if (!p || !Number.isFinite(v) || v < 0 || v > 999) { $('#bonus-status').textContent = 'Indique un nombre de points entre 0 et 999.'; return; }
-      p.bonus = v;
+      const val = Math.round(Number(input.value));
+      const v = viewed();
+      if (!p || v.scope === 'year' || input.value === '' || !Number.isFinite(val) || val < 0 || val > 999) { $('#bonus-status').textContent = 'Indique un nombre de points entre 0 et 999.'; return; }
+      p.pts = p.pts || {};
+      if (val > 0) p.pts[v.keys[0]] = val; else delete p.pts[v.keys[0]];
       persist();
       input.blur();
       renderRanking();
-      $('#bonus-status').textContent = p.name + ' : ' + plural(v, 'point') + ' de départ enregistré' + (v > 1 ? 's' : '') + '.';
+      $('#bonus-status').textContent = p.name + ' : ' + plural(val, 'point') + ' enregistré' + (val > 1 ? 's' : '') + ' pour le semestre ' + v.scope + '.';
     });
 
     document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));

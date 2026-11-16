@@ -83,16 +83,24 @@
         <h2 id="h-rank">Classement MVP</h2>
         <span class="count" id="match-count"></span>
       </div>
-      <p class="legend">Être MVP d’un match rapporte 1 point. À 2 équipes, les 3 MVP sont élus par vote ; à 3 ou 4 équipes, toute l’équipe gagnante est MVP. À égalité, le plus de victoires passe devant.</p>
+      <div class="period">
+        <select id="rank-season" aria-label="Saison" hidden></select>
+        <div class="seg" role="group" aria-label="Période affichée" id="rank-seg">
+          <button type="button" data-scope="1" aria-pressed="false">Semestre 1</button>
+          <button type="button" data-scope="2" aria-pressed="false">Semestre 2</button>
+          <button type="button" data-scope="year" aria-pressed="false">Année</button>
+        </div>
+      </div>
+      <p class="legend">Être MVP d’un match rapporte 1 point. À 2 équipes, les 3 MVP sont élus par vote ; à 3 ou 4 équipes, toute l’équipe gagnante est MVP. À égalité, le plus de victoires passe devant. L’année additionne les deux semestres.</p>
       <div id="ranking"></div>
     </section>
 
     <section aria-labelledby="h-bonus" id="bonus-sec" hidden>
-      <h2 id="h-bonus">Points de départ</h2>
-      <p class="legend">Saison déjà commencée ? Indique les points MVP qu’un joueur avait déjà : ils s’ajoutent à ceux gagnés dans l’appli.</p>
+      <h2 id="h-bonus">Ajouter des points</h2>
+      <p class="legend" id="bonus-legend"></p>
       <form class="add" id="bonus-form" autocomplete="off">
         <select id="bonus-player" aria-label="Joueur"></select>
-        <input type="number" id="bonus-value" min="0" max="999" step="1" inputmode="numeric" aria-label="Points MVP de départ" required>
+        <input type="number" id="bonus-value" min="0" max="999" step="1" inputmode="numeric" aria-label="Points MVP hors appli" required>
         <button type="submit" class="primary-sm">Enregistrer</button>
       </form>
       <p class="status" id="bonus-status" aria-live="polite"></p>
@@ -102,8 +110,17 @@
       <h2 id="h-hist">Matchs joués</h2>
       <ul class="list" id="history"></ul>
       <div class="tools">
-        <button type="button" class="btn small danger" id="reset-season">Remettre le classement à zéro</button>
+        <button type="button" class="btn small danger" id="reset-season">Remettre ce semestre à zéro</button>
       </div>
+    </section>
+
+    <section aria-labelledby="h-close">
+      <h2 id="h-close">Clôture</h2>
+      <p class="legend" id="close-now"></p>
+      <div class="tools">
+        <button type="button" class="btn" id="close-period"></button>
+      </div>
+      <p class="status" id="close-status" aria-live="polite"></p>
     </section>
   </div>
 </main>

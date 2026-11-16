@@ -192,6 +192,10 @@ h2 {
 .pick[aria-pressed="true"] .star { color: var(--gold); }
 
 /* Classement */
+.period { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.period select { min-height: 44px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); }
+#rank-seg button { font-size: 18px; letter-spacing: 0.04em; text-transform: uppercase; padding: 0 14px; }
+
 .podium {
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
   display: flex; align-items: center; gap: 14px;
