@@ -508,6 +508,85 @@
     $('#tools').hidden = arr.length === 0;
   }
 
+  /* ================= Liste collée : cocher les présents depuis un message ================= */
+  const normName = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim();
+  function parseList(text) {
+    const seen = new Set(), out = [];
+    String(text).split(/[\n,;]+/).forEach(raw => {
+      /* On enlève la numérotation, les puces et les emojis en début de ligne, et les « +1 » ou parenthèses en fin. */
+      const label = raw.replace(/^[^\p{L}\p{N}]*(\d+\s*[.)\-:/]\s*)?[^\p{L}\p{N}]*/u, '')
+        .replace(/\s*(\(.*\)|\+\s*\d+)\s*$/u, '').replace(/[^\p{L}\p{N}.' _-]+/gu, ' ').trim().slice(0, 30);
+      const key = normName(label);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push({ label: label, key: key });
+    });
+    return out;
+  }
+  /* Du plus strict au plus large : nom exact, même prénom, mots communs, début de mot. */
+  function candidatesFor(key) {
+    const words = key.split(' ');
+    const list = state.players.map(p => ({ p: p, n: normName(p.name) })).filter(x => x.n);
+    const tiers = [
+      x => x.n === key,
+      x => x.n.split(' ')[0] === words[0] && (words.length === 1 || x.n.split(' ').length === 1),
+      x => { const w = x.n.split(' '); return words.every(k => w.includes(k)) || w.every(k => words.includes(k)); },
+      x => key.length >= 3 && x.n.split(' ').some(w => w.startsWith(key))
+    ];
+    for (const t of tiers) {
+      const hit = list.filter(t).map(x => x.p);
+      if (hit.length) return hit;
+    }
+    return [];
+  }
+  function applyPastedList(text, uncheckOthers) {
+    const items = parseList(text);
+    if (!items.length) return null;
+    const found = new Map(), unsure = [], unknown = [];
+    items.forEach(it => {
+      const c = candidatesFor(it.key);
+      if (c.length === 1) found.set(c[0].id, c[0]);
+      else if (c.length > 1) unsure.push({ label: it.label, options: c });
+      else unknown.push(it.label);
+    });
+    if (uncheckOthers) state.players.forEach(p => { p.present = false; });
+    found.forEach(p => { p.present = true; });
+    persist();
+    renderPlayers();
+    renderSummary();
+    return { found: found.size, unsure: unsure, unknown: unknown };
+  }
+  function renderPasteResult(r) {
+    const box = $('#paste-result');
+    box.textContent = '';
+    box.hidden = false;
+    if (!r) { box.append(h('p', { class: 'note' }, 'Aucun nom trouvé dans ce texte.')); return; }
+    box.append(h('p', { class: 'note' }, plural(r.found, 'joueur') + ' coché' + (r.found > 1 ? 's' : '') + '.' +
+      (r.unsure.length || r.unknown.length ? ' Il reste ' + plural(r.unsure.length + r.unknown.length, 'nom') + ' à traiter ci-dessous.' : '')));
+    const present = id => { const p = player(id); if (p) { p.present = true; persist(); renderPlayers(); renderSummary(); } };
+    r.unsure.forEach(u => {
+      const row = h('div', { class: 'paste-row' }, h('span', null, '« ' + u.label + ' » : lequel ?'));
+      u.options.forEach(p => {
+        const b = h('button', { type: 'button', class: 'btn small' }, p.name);
+        b.addEventListener('click', () => { present(p.id); row.textContent = ''; row.append(h('span', null, '« ' + u.label + ' » : ' + p.name + ' coché.')); });
+        row.append(b);
+      });
+      box.append(row);
+    });
+    r.unknown.forEach(label => {
+      const row = h('div', { class: 'paste-row' }, h('span', null, '« ' + label + ' » : introuvable.'));
+      const b = h('button', { type: 'button', class: 'btn small' }, 'Ajouter comme nouveau joueur');
+      b.addEventListener('click', () => {
+        state.players.push({ id: newId('p'), name: label, level: 5, present: true, pts: {} });
+        persist(); renderPlayers(); renderSummary();
+        row.textContent = ''; row.append(h('span', null, label + ' ajouté avec la note 5.'));
+      });
+      row.append(b);
+      box.append(row);
+    });
+  }
+
   /* ================= Tirage ================= */
   function poolNow() { return state.players.filter(p => p.present); }
   function keyFor(pool, k) { return pool.map(p => p.id + ':' + p.level).sort().join(',') + '|' + k; }
@@ -953,6 +1032,17 @@
     $('#all').addEventListener('click', () => setAll(true));
     $('#none').addEventListener('click', () => setAll(false));
     $('#to-match').addEventListener('click', () => show('match'));
+    $('#paste-open').addEventListener('click', () => {
+      const panel = $('#paste-panel');
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) $('#paste-text').focus();
+    });
+    $('#paste-apply').addEventListener('click', () => {
+      const box = $('#paste-text');
+      const r = applyPastedList(box.value, $('#paste-uncheck').checked);
+      renderPasteResult(r);
+      if (r) box.value = '';
+    });
     $('#go').addEventListener('click', runDraw);
 
     let confirmReset = false, confirmTimer = null;

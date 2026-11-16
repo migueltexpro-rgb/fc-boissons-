@@ -191,6 +191,11 @@ h2 {
 .pick[aria-pressed="true"] { background: var(--soft); font-weight: 600; }
 .pick[aria-pressed="true"] .star { color: var(--gold); }
 
+/* Liste collée */
+.paste, .paste-result { display: flex; flex-direction: column; gap: 10px; }
+.paste-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+.paste-row span { min-width: 0; overflow-wrap: anywhere; }
+
 /* Connexion */
 .auth { display: flex; align-items: center; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; font-size: 14px; color: var(--muted); }
 .auth span { min-width: 0; overflow-wrap: anywhere; }

@@ -52,6 +52,17 @@
       <div class="tools" id="tools">
         <button type="button" class="btn small" id="all">Tout cocher</button>
         <button type="button" class="btn small" id="none">Tout décocher</button>
+        <button type="button" class="btn small" id="paste-open">Coller une liste</button>
+      </div>
+
+      <div class="paste" id="paste-panel" hidden>
+        <p class="legend">Colle la liste des présents (un nom par ligne, ou séparés par des virgules). Les numéros et les emojis sont ignorés.</p>
+        <textarea class="fallback" id="paste-text" aria-label="Liste des présents" placeholder="1. Mattia&#10;2. Peppe&#10;3. Julien"></textarea>
+        <div class="res-actions">
+          <button type="button" class="btn" id="paste-apply">Cocher ces joueurs</button>
+          <label class="check" for="paste-uncheck"><input type="checkbox" id="paste-uncheck" checked>Décocher tous les autres</label>
+        </div>
+        <div class="paste-result" id="paste-result" hidden></div>
       </div>
 
       <ul class="list" id="list" aria-label="Liste des joueurs"></ul>
