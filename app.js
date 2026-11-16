@@ -72,37 +72,37 @@
   }
 
   /* ================= Classement ================= */
-  const PTS_WIN = 3, PTS_DRAW = 1;
+  /* MVP : à 2 équipes, 3 joueurs élus par vote ; à 3 ou 4 équipes, toute l'équipe gagnante. */
+  const MVP_VOTES = 3;
+  function mvpsOf(m) {
+    if (Array.isArray(m.mvps)) return m.mvps;
+    return m.teams.length > 2 && m.winner !== -1 ? m.teams[m.winner].map(p => p.id) : [];
+  }
   function standings(matches, players) {
     const byId = new Map();
     const current = new Map(players.map(p => [p.id, p]));
     matches.forEach(m => {
+      const mvps = new Set(mvpsOf(m));
       m.teams.forEach((team, i) => {
         team.forEach(pl => {
           let s = byId.get(pl.id);
-          if (!s) { s = { id: pl.id, name: pl.name, played: 0, wins: 0, draws: 0, losses: 0 }; byId.set(pl.id, s); }
+          if (!s) { s = { id: pl.id, name: pl.name, played: 0, wins: 0, mvp: 0 }; byId.set(pl.id, s); }
           s.name = pl.name;
           s.played++;
-          if (m.winner === -1) s.draws++;
-          else if (m.winner === i) s.wins++;
-          else s.losses++;
+          if (m.winner === i) s.wins++;
+          if (mvps.has(pl.id)) s.mvp++;
         });
       });
     });
     const rows = [...byId.values()].map(s => {
       const cur = current.get(s.id);
-      return Object.assign(s, {
-        name: cur ? cur.name : s.name,
-        gone: !cur,
-        points: s.wins * PTS_WIN + s.draws * PTS_DRAW,
-        rate: s.played ? s.wins / s.played : 0
-      });
+      return Object.assign(s, { name: cur ? cur.name : s.name, gone: !cur });
     });
-    rows.sort((a, b) => b.points - a.points || b.rate - a.rate || b.wins - a.wins || a.name.localeCompare(b.name, 'fr'));
+    rows.sort((a, b) => b.mvp - a.mvp || b.wins - a.wins || a.played - b.played || a.name.localeCompare(b.name, 'fr'));
     let rank = 0;
     rows.forEach((r, i) => {
       const prev = rows[i - 1];
-      if (!prev || prev.points !== r.points || prev.rate !== r.rate || prev.wins !== r.wins) rank = i + 1;
+      if (!prev || prev.mvp !== r.mvp || prev.wins !== r.wins || prev.played !== r.played) rank = i + 1;
       r.rank = rank;
     });
     return rows;
@@ -335,7 +335,7 @@
     const k = state.k;
     if (pool.length < 2 * k) return;
     const r = generate(pool.map(p => ({ id: p.id, name: p.name, level: p.level })), k, state.draw ? state.draw.sig : null);
-    state.draw = { teams: r.teams, spread: r.spread, sig: r.sig, warn: r.warn, key: keyFor(pool, k), recorded: null };
+    state.draw = { teams: r.teams, spread: r.spread, sig: r.sig, warn: r.warn, key: keyFor(pool, k), recorded: null, vote: null };
     persist();
     renderDraw();
     renderSummary();
@@ -343,20 +343,37 @@
   }
 
   /* ================= Fin du match ================= */
-  function recordMatch(winner) {
+  function recordMatch(winner, mvps) {
     const draw = state.draw;
     if (!draw || draw.recorded) return;
     const m = {
       id: newId('m'),
       date: new Date().toISOString(),
       winner: winner,
+      mvps: mvps,
       teams: draw.teams.map(t => t.map(p => ({ id: p.id, name: p.name })))
     };
     state.matches.push(m);
     draw.recorded = m.id;
+    draw.vote = null;
     persist();
     renderEnd();
     renderRanking();
+  }
+  function pickWinner(winner) {
+    const draw = state.draw;
+    if (draw.teams.length > 2) {
+      recordMatch(winner, winner === -1 ? [] : draw.teams[winner].map(p => p.id));
+      return;
+    }
+    draw.vote = { winner: winner, mvps: [] };
+    persist();
+    renderEnd();
+  }
+  function namesOf(m, ids) {
+    const all = new Map();
+    m.teams.forEach(t => t.forEach(p => all.set(p.id, p.name)));
+    return ids.map(id => all.get(id)).filter(Boolean);
   }
   function deleteMatch(id) {
     state.matches = state.matches.filter(m => m.id !== id);
@@ -377,11 +394,10 @@
 
     const done = draw.recorded && state.matches.find(m => m.id === draw.recorded);
     if (done) {
+      const mvpNames = namesOf(done, mvpsOf(done));
       const card = h('div', { class: 'recorded' },
         h('strong', null, outcomeLabel(done)),
-        h('p', null, done.winner === -1
-          ? 'Résultat enregistré : 1 point pour chaque joueur.'
-          : 'Résultat enregistré : 3 points pour ' + done.teams[done.winner].map(p => p.name).join(', ') + '.')
+        h('p', null, mvpNames.length ? 'MVP : ' + mvpNames.join(', ') + '.' : 'Pas de MVP pour ce match.')
       );
       if (done.winner !== -1) paint(card, done.winner);
       const undo = h('button', { type: 'button', class: 'btn small' }, 'Annuler ce résultat');
@@ -395,15 +411,65 @@
       return;
     }
 
-    body.append(h('p', { class: 'legend' }, 'Qui a gagné ? Chaque joueur de l’équipe gagnante prend 3 points au classement MVP.'));
+    const two = draw.teams.length === 2;
+
+    /* Étape 2 (2 équipes) : le vote des 3 MVP. */
+    if (two && draw.vote) {
+      const vote = draw.vote;
+      const total = draw.teams.reduce((s, t) => s + t.length, 0);
+      const need = Math.min(MVP_VOTES, total);
+      const head = h('div', { class: 'recorded' }, h('strong', null, outcomeLabel(vote)));
+      if (vote.winner !== -1) paint(head, vote.winner);
+      const counter = h('p', { 'aria-live': 'polite' });
+      head.append(counter);
+      body.append(head);
+      const ok = h('button', { type: 'button', class: 'go' }, 'Valider les MVP');
+      const sync = () => {
+        const left = need - vote.mvps.length;
+        counter.textContent = left > 0
+          ? 'Vote des MVP : choisis ' + need + ' joueurs, toutes équipes confondues. Encore ' + left + '.'
+          : 'Les ' + need + ' MVP sont choisis.';
+        ok.disabled = left !== 0;
+      };
+      const grid = h('div', { class: 'teams' });
+      draw.teams.forEach((t, i) => {
+        grid.append(paint(h('article', { class: 'team' },
+          h('header', null, h('h3', null, BIBS[i].name)),
+          h('ul', null, t.map(p => {
+            const b = h('button', { type: 'button', class: 'pick', 'aria-pressed': String(vote.mvps.includes(p.id)) }, h('span', null, p.name), h('span', { class: 'star', 'aria-hidden': 'true' }, '★'));
+            b.addEventListener('click', () => {
+              const on = vote.mvps.includes(p.id);
+              if (!on && vote.mvps.length >= need) return;
+              vote.mvps = on ? vote.mvps.filter(x => x !== p.id) : vote.mvps.concat(p.id);
+              b.setAttribute('aria-pressed', String(!on));
+              persist();
+              sync();
+            });
+            return h('li', { class: 'pick-li' }, b);
+          }))
+        ), i));
+      });
+      body.append(grid);
+      const back = h('button', { type: 'button', class: 'btn small' }, 'Changer le vainqueur');
+      back.addEventListener('click', () => { draw.vote = null; persist(); renderEnd(); });
+      ok.addEventListener('click', () => recordMatch(vote.winner, vote.mvps.slice()));
+      body.append(ok, h('div', { class: 'tools' }, back));
+      sync();
+      return;
+    }
+
+    /* Étape 1 : le vainqueur. */
+    body.append(h('p', { class: 'legend' }, two
+      ? 'Qui a gagné ? Ensuite, vous votez pour les 3 MVP du match.'
+      : 'Qui a gagné ? Tous les joueurs de l’équipe gagnante sont MVP.'));
     const grid = h('div', { class: 'winners' });
     draw.teams.forEach((t, i) => {
       const b = paint(h('button', { type: 'button', class: 'win' }, BIBS[i].name, h('small', null, 'a gagné')), i);
-      b.addEventListener('click', () => recordMatch(i));
+      b.addEventListener('click', () => pickWinner(i));
       grid.append(b);
     });
-    const nul = h('button', { type: 'button', class: 'win draw' }, 'Match nul', h('small', null, '1 point chacun'));
-    nul.addEventListener('click', () => recordMatch(-1));
+    const nul = h('button', { type: 'button', class: 'win draw' }, 'Match nul', h('small', null, two ? 'puis vote des MVP' : 'pas de MVP'));
+    nul.addEventListener('click', () => pickWinner(-1));
     grid.append(nul);
     body.append(grid);
   }
@@ -422,27 +488,25 @@
       return;
     }
     const table = standings(state.matches, state.players);
-    const leaders = table.filter(r => r.rank === 1);
-    box.append(h('div', { class: 'podium' },
+    const leaders = table.filter(r => r.rank === 1 && r.mvp > 0);
+    if (leaders.length) box.append(h('div', { class: 'podium' },
       h('span', { class: 'medal', 'aria-hidden': 'true' }, '🏆'),
       h('div', { class: 'who' },
         h('div', { class: 'lab' }, leaders.length > 1 ? 'MVP ex æquo' : 'MVP'),
         h('div', { class: 'name' }, leaders.map(r => r.name).join(' · ')),
-        h('div', { class: 'stat' }, plural(leaders[0].points, 'point') + ' · ' + plural(leaders[0].wins, 'victoire') + ' en ' + plural(leaders[0].played, 'match'))
+        h('div', { class: 'stat' }, leaders[0].mvp + ' fois MVP · ' + plural(leaders[0].wins, 'victoire') + ' en ' + plural(leaders[0].played, 'match'))
       )
     ));
     box.append(h('div', { class: 'table-wrap' }, h('table', null,
       h('thead', null, h('tr', null,
         h('th', { scope: 'col' }, '#'), h('th', { scope: 'col' }, 'Joueur'),
         h('th', { scope: 'col', title: 'Matchs joués' }, 'J'), h('th', { scope: 'col', title: 'Victoires' }, 'V'),
-        h('th', { scope: 'col', title: 'Nuls' }, 'N'), h('th', { scope: 'col', title: 'Défaites' }, 'D'),
-        h('th', { scope: 'col', title: 'Taux de victoires' }, '%'), h('th', { scope: 'col' }, 'Pts'))),
-      h('tbody', null, table.map(r => h('tr', { class: r.rank === 1 ? 'first' : '' },
+        h('th', { scope: 'col', title: 'Nombre de fois MVP' }, 'MVP'))),
+      h('tbody', null, table.map(r => h('tr', { class: r.rank === 1 && r.mvp > 0 ? 'first' : '' },
         h('td', null, r.rank),
         h('td', null, r.name, r.gone ? h('span', { class: 'gone' }, ' (retiré)') : null),
-        h('td', null, r.played), h('td', null, r.wins), h('td', null, r.draws), h('td', null, r.losses),
-        h('td', null, Math.round(r.rate * 100)),
-        h('td', { class: 'pts' }, r.points)
+        h('td', null, r.played), h('td', null, r.wins),
+        h('td', { class: 'pts' }, r.mvp)
       )))
     )));
 
@@ -450,7 +514,8 @@
     hist.textContent = '';
     state.matches.slice().reverse().forEach(m => {
       const when = new Date(m.date).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
-      const who = m.winner === -1 ? plural(m.teams.length, 'équipe') : m.teams[m.winner].map(p => p.name).join(', ');
+      const mv = namesOf(m, mvpsOf(m));
+      const who = mv.length ? 'MVP : ' + mv.join(', ') : 'pas de MVP';
       const del = h('button', { type: 'button', class: 'sbtn del', 'aria-label': 'Supprimer ce match' }, '×');
       del.addEventListener('click', () => deleteMatch(m.id));
       const dot = h('span', { class: 'dot' });
@@ -519,7 +584,7 @@
       clearTimeout(confirmTimer);
       btn.textContent = label;
       state.matches = [];
-      if (state.draw) state.draw.recorded = null;
+      if (state.draw) { state.draw.recorded = null; state.draw.vote = null; }
       persist();
       renderEnd();
       renderRanking();
