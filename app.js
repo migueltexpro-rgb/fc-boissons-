@@ -1,0 +1,543 @@
+(function () {
+  'use strict';
+
+  /* ================= Tirage équilibré ================= */
+  function shuffle(a) {
+    const r = a.slice();
+    for (let i = r.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = r[i]; r[i] = r[j]; r[j] = t;
+    }
+    return r;
+  }
+  function avg(t) { return t.reduce((s, p) => s + p.level, 0) / t.length; }
+  function spreadOf(teams) {
+    const a = teams.map(avg);
+    return Math.max.apply(null, a) - Math.min.apply(null, a);
+  }
+  function tensPairs(teams) {
+    return teams.reduce((s, t) => {
+      const c = t.filter(p => p.level === 10).length;
+      return s + c * (c - 1) / 2;
+    }, 0);
+  }
+  function costOf(teams) { return spreadOf(teams) + 10 * tensPairs(teams); }
+  function improve(teams) {
+    let cur = costOf(teams), changed = true, guard = 0;
+    while (changed && guard++ < 200) {
+      changed = false;
+      outer:
+      for (let a = 0; a < teams.length; a++) {
+        for (let b = a + 1; b < teams.length; b++) {
+          for (let i = 0; i < teams[a].length; i++) {
+            for (let j = 0; j < teams[b].length; j++) {
+              const x = teams[a][i], y = teams[b][j];
+              if (x.level === y.level) continue;
+              teams[a][i] = y; teams[b][j] = x;
+              const s = costOf(teams);
+              if (s < cur - 1e-9) { cur = s; changed = true; break outer; }
+              teams[a][i] = x; teams[b][j] = y;
+            }
+          }
+        }
+      }
+    }
+    return cur;
+  }
+  function sizesFor(n, k) {
+    const base = Math.floor(n / k), rem = n % k;
+    return Array.from({ length: k }, (_, i) => base + (i < rem ? 1 : 0));
+  }
+  function sigOf(teams) {
+    return teams.map(t => t.map(p => p.id).sort().join(',')).sort().join('|');
+  }
+  function generate(pool, k, lastSig) {
+    const sizes = sizesFor(pool.length, k);
+    const found = [];
+    for (let r = 0; r < 80; r++) {
+      const arr = shuffle(pool);
+      let idx = 0;
+      const teams = sizes.map(s => { const t = arr.slice(idx, idx + s); idx += s; return t; });
+      const sc = improve(teams);
+      found.push({ teams: teams, sc: sc, sig: sigOf(teams) });
+    }
+    const min = Math.min.apply(null, found.map(f => f.sc));
+    let good = found.filter(f => f.sc <= min + 1e-9);
+    if (new Set(good.map(f => f.sig)).size < 2) good = found.filter(f => f.sc <= min + 0.2 + 1e-9);
+    const fresh = good.filter(f => f.sig !== lastSig);
+    const list = fresh.length ? fresh : good;
+    const pick = list[Math.floor(Math.random() * list.length)];
+    const teams = shuffle(pick.teams).map(t => t.slice().sort((a, b) => b.level - a.level || a.name.localeCompare(b.name, 'fr')));
+    return { teams: teams, spread: spreadOf(pick.teams), sig: pick.sig, warn: tensPairs(pick.teams) > 0 };
+  }
+
+  /* ================= Classement ================= */
+  const PTS_WIN = 3, PTS_DRAW = 1;
+  function standings(matches, players) {
+    const byId = new Map();
+    const current = new Map(players.map(p => [p.id, p]));
+    matches.forEach(m => {
+      m.teams.forEach((team, i) => {
+        team.forEach(pl => {
+          let s = byId.get(pl.id);
+          if (!s) { s = { id: pl.id, name: pl.name, played: 0, wins: 0, draws: 0, losses: 0 }; byId.set(pl.id, s); }
+          s.name = pl.name;
+          s.played++;
+          if (m.winner === -1) s.draws++;
+          else if (m.winner === i) s.wins++;
+          else s.losses++;
+        });
+      });
+    });
+    const rows = [...byId.values()].map(s => {
+      const cur = current.get(s.id);
+      return Object.assign(s, {
+        name: cur ? cur.name : s.name,
+        gone: !cur,
+        points: s.wins * PTS_WIN + s.draws * PTS_DRAW,
+        rate: s.played ? s.wins / s.played : 0
+      });
+    });
+    rows.sort((a, b) => b.points - a.points || b.rate - a.rate || b.wins - a.wins || a.name.localeCompare(b.name, 'fr'));
+    let rank = 0;
+    rows.forEach((r, i) => {
+      const prev = rows[i - 1];
+      if (!prev || prev.points !== r.points || prev.rate !== r.rate || prev.wins !== r.wins) rank = i + 1;
+      r.rank = rank;
+    });
+    return rows;
+  }
+
+  /* ================= Outils ================= */
+  const $ = s => document.querySelector(s);
+  function h(tag, props) {
+    const e = document.createElement(tag);
+    if (props) for (const k of Object.keys(props)) {
+      const v = props[k];
+      if (k === 'class') e.className = v;
+      else if (v === true) e.setAttribute(k, '');
+      else if (v !== false && v != null) e.setAttribute(k, v);
+    }
+    const add = c => {
+      if (c == null || c === false) return;
+      if (Array.isArray(c)) { c.forEach(add); return; }
+      e.append(c.nodeType ? c : document.createTextNode(String(c)));
+    };
+    for (let i = 2; i < arguments.length; i++) add(arguments[i]);
+    return e;
+  }
+  const fmt = n => n.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const plural = (n, w) => n + ' ' + w + (n > 1 ? 's' : '');
+  function newId(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+  const BIBS = [
+    { name: 'Rouge', bg: '#CF3434', ink: '#FFFFFF', dot: '🔴' },
+    { name: 'Bleu', bg: '#2F6FD0', ink: '#FFFFFF', dot: '🔵' },
+    { name: 'Blanc', bg: '#F6F6F3', ink: '#15191C', dot: '⚪' },
+    { name: 'Noir', bg: '#14181B', ink: '#FFFFFF', dot: '⚫' }
+  ];
+  function paint(el, i) {
+    el.style.setProperty('--bib', BIBS[i].bg);
+    el.style.setProperty('--ink', BIBS[i].ink);
+    return el;
+  }
+
+  /* ================= État, gardé sur l'appareil ================= */
+  const LS_KEY = 'fc-boissons-v1';
+  const state = { players: [], matches: [], draw: null, k: 2, kAuto: true, showLevels: true };
+  let storageOk = true;
+
+  function load() {
+    try {
+      const s = JSON.parse(localStorage.getItem(LS_KEY));
+      if (s && typeof s === 'object') {
+        if (Array.isArray(s.players)) state.players = s.players.filter(p => p && p.id);
+        if (Array.isArray(s.matches)) state.matches = s.matches.filter(m => m && Array.isArray(m.teams));
+        if (s.draw && Array.isArray(s.draw.teams)) state.draw = s.draw;
+        if ([2, 3, 4].includes(s.k)) state.k = s.k;
+        if (typeof s.kAuto === 'boolean') state.kAuto = s.kAuto;
+        if (typeof s.showLevels === 'boolean') state.showLevels = s.showLevels;
+      }
+    } catch (e) { storageOk = false; }
+  }
+  function persist() {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(state)); storageOk = true; }
+    catch (e) { storageOk = false; }
+    $('#status').textContent = storageOk ? '' : 'Impossible d’enregistrer sur cet appareil : les changements seront perdus à la fermeture.';
+  }
+  const player = id => state.players.find(p => p.id === id);
+
+  /* ================= Joueurs ================= */
+  const rows = new Map();
+
+  function makeRow(id) {
+    const cb = h('input', { type: 'checkbox', class: 'chk' });
+    const nameIn = h('input', { type: 'text', class: 'nm', autocomplete: 'off', maxlength: '30', 'aria-label': 'Nom du joueur' });
+    const val = h('span', { class: 'lv' });
+    const dec = h('button', { type: 'button', class: 'sbtn' }, '−');
+    const inc = h('button', { type: 'button', class: 'sbtn' }, '+');
+    const del = h('button', { type: 'button', class: 'sbtn del' }, '×');
+    const el = h('li', { class: 'row' }, cb, nameIn, h('div', { class: 'step' }, dec, val, inc), del);
+    cb.addEventListener('change', () => {
+      player(id).present = cb.checked;
+      persist();
+      el.classList.toggle('off', !cb.checked);
+      renderSummary();
+    });
+    nameIn.addEventListener('change', () => {
+      const p = player(id);
+      const v = nameIn.value.trim();
+      if (!v) { nameIn.value = p.name; return; }
+      p.name = v;
+      persist();
+      renderPlayers();
+      renderSummary();
+    });
+    const bump = d => {
+      const p = player(id);
+      const next = clamp(p.level + d, 1, 10);
+      if (next === p.level) return;
+      p.level = next;
+      persist();
+      val.textContent = next;
+      renderSummary();
+    };
+    dec.addEventListener('click', () => bump(-1));
+    inc.addEventListener('click', () => bump(1));
+    del.addEventListener('click', () => {
+      state.players = state.players.filter(p => p.id !== id);
+      persist();
+      renderPlayers();
+      renderSummary();
+    });
+    return { el: el, cb: cb, nameIn: nameIn, val: val, dec: dec, inc: inc, del: del };
+  }
+
+  function renderPlayers() {
+    const arr = state.players.slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+    const ids = new Set(arr.map(p => p.id));
+    for (const [id, r] of rows) {
+      if (!ids.has(id)) { r.el.remove(); rows.delete(id); }
+    }
+    const list = $('#list');
+    let ref = list.firstChild;
+    arr.forEach(p => {
+      let r = rows.get(p.id);
+      if (!r) { r = makeRow(p.id); rows.set(p.id, r); }
+      r.cb.checked = !!p.present;
+      r.el.classList.toggle('off', !p.present);
+      if (document.activeElement !== r.nameIn) r.nameIn.value = p.name;
+      r.val.textContent = p.level;
+      r.cb.setAttribute('aria-label', 'Présent : ' + p.name);
+      r.dec.setAttribute('aria-label', 'Baisser la note de ' + p.name);
+      r.inc.setAttribute('aria-label', 'Monter la note de ' + p.name);
+      r.del.setAttribute('aria-label', 'Retirer ' + p.name);
+      if (ref === r.el) { ref = ref.nextSibling; } else { list.insertBefore(r.el, ref); }
+    });
+    list.hidden = arr.length === 0;
+    $('#empty').hidden = arr.length !== 0;
+    $('#tools').hidden = arr.length === 0;
+  }
+
+  /* ================= Tirage ================= */
+  function poolNow() { return state.players.filter(p => p.present); }
+  function keyFor(pool, k) { return pool.map(p => p.id + ':' + p.level).sort().join(',') + '|' + k; }
+
+  function renderSummary() {
+    const pool = poolNow();
+    const n = pool.length;
+    $('#count').textContent = plural(n, 'présent') + ' sur ' + state.players.length;
+    if (state.kAuto) state.k = clamp(Math.round(n / 5), 2, 4);
+    const k = state.k;
+
+    $('#seg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.k) === k)));
+
+    const hint = $('#hint');
+    const go = $('#go');
+    if (n < 2 * k) {
+      hint.textContent = 'Il faut au moins ' + (2 * k) + ' joueurs présents pour ' + k + ' équipes. Coche les présents dans l’onglet Joueurs.';
+      go.disabled = true;
+    } else {
+      const s = sizesFor(n, k);
+      const equal = s.every(x => x === s[0]);
+      hint.textContent = n + ' présents : ' + k + ' équipes ' + (equal ? 'de ' + s[0] + ' joueurs.' : '(' + s.join(' / ') + ' joueurs).');
+      go.disabled = false;
+    }
+    go.textContent = state.draw ? 'Tirer à nouveau' : 'Générer les équipes';
+    $('#to-match').disabled = n < 4;
+
+    const stale = document.getElementById('stale');
+    if (stale) stale.hidden = !state.draw || state.draw.key === keyFor(pool, k);
+  }
+
+  function renderDraw() {
+    const box = $('#result');
+    const draw = state.draw;
+    box.textContent = '';
+    if (!draw) { box.hidden = true; renderEnd(); return; }
+    box.hidden = false;
+    const sp = draw.spread;
+    const verdict = sp <= 0.31 ? 'Très équilibré' : sp <= 0.81 ? 'Équilibré' : 'Écart marqué';
+    const kids = [];
+    kids.push(h('div', { class: 'verdict' },
+      h('strong', null, verdict),
+      h('span', null, 'Écart entre la meilleure et la moins bonne moyenne : ' + fmt(sp))
+    ));
+    if (draw.warn) {
+      kids.push(h('p', { class: 'note' }, 'Il y a plus de joueurs à 10 que d’équipes : impossible d’éviter que deux 10/10 se retrouvent ensemble.'));
+    }
+    kids.push(h('p', { class: 'note', id: 'stale', hidden: true }, 'La liste ou le nombre d’équipes a changé depuis ce tirage. Relance le tirage pour le mettre à jour.'));
+    const grid = h('div', { class: 'teams' + (state.showLevels ? '' : ' levels-off') });
+    draw.teams.forEach((t, i) => {
+      const total = t.reduce((s, p) => s + p.level, 0);
+      grid.append(paint(h('article', { class: 'team' },
+        h('header', null, h('h3', null, BIBS[i].name), h('span', null, t.length + ' joueurs')),
+        h('ul', null, t.map(p => h('li', null, h('span', null, p.name), h('span', { class: 'n' }, p.level)))),
+        h('footer', null, 'Total ' + total + ' · moyenne ' + fmt(total / t.length))
+      ), i));
+    });
+    kids.push(grid);
+
+    const copyBtn = h('button', { type: 'button', class: 'btn' }, 'Copier pour WhatsApp');
+    const lv = h('input', { type: 'checkbox', id: 'show-levels' });
+    lv.checked = state.showLevels;
+    lv.addEventListener('change', () => {
+      state.showLevels = lv.checked;
+      persist();
+      grid.classList.toggle('levels-off', !state.showLevels);
+    });
+    const fallback = h('textarea', { class: 'fallback', readonly: true, hidden: true, 'aria-label': 'Texte à copier' });
+    kids.push(h('div', { class: 'res-actions' }, copyBtn, h('label', { class: 'check', for: 'show-levels' }, lv, 'Afficher les notes')));
+    kids.push(fallback);
+    box.append.apply(box, kids);
+
+    copyBtn.addEventListener('click', async () => {
+      const lines = ['⚽ FC Boissons', ''];
+      draw.teams.forEach((t, i) => lines.push(BIBS[i].dot + ' ' + BIBS[i].name + ' : ' + t.map(p => p.name).join(', ')));
+      const text = lines.join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        copyBtn.textContent = 'Copié';
+        setTimeout(() => { copyBtn.textContent = 'Copier pour WhatsApp'; }, 1800);
+      } catch (e) {
+        fallback.hidden = false;
+        fallback.value = text;
+        fallback.focus();
+        fallback.select();
+      }
+    });
+    renderEnd();
+  }
+
+  function runDraw() {
+    const pool = poolNow();
+    const k = state.k;
+    if (pool.length < 2 * k) return;
+    const r = generate(pool.map(p => ({ id: p.id, name: p.name, level: p.level })), k, state.draw ? state.draw.sig : null);
+    state.draw = { teams: r.teams, spread: r.spread, sig: r.sig, warn: r.warn, key: keyFor(pool, k), recorded: null };
+    persist();
+    renderDraw();
+    renderSummary();
+    $('#result').scrollIntoView({ block: 'start' });
+  }
+
+  /* ================= Fin du match ================= */
+  function recordMatch(winner) {
+    const draw = state.draw;
+    if (!draw || draw.recorded) return;
+    const m = {
+      id: newId('m'),
+      date: new Date().toISOString(),
+      winner: winner,
+      teams: draw.teams.map(t => t.map(p => ({ id: p.id, name: p.name })))
+    };
+    state.matches.push(m);
+    draw.recorded = m.id;
+    persist();
+    renderEnd();
+    renderRanking();
+  }
+  function deleteMatch(id) {
+    state.matches = state.matches.filter(m => m.id !== id);
+    if (state.draw && state.draw.recorded === id) state.draw.recorded = null;
+    persist();
+    renderEnd();
+    renderRanking();
+  }
+  function outcomeLabel(m) { return m.winner === -1 ? 'Match nul' : 'Victoire ' + BIBS[m.winner].name; }
+
+  function renderEnd() {
+    const sec = $('#end');
+    const body = $('#end-body');
+    const draw = state.draw;
+    body.textContent = '';
+    if (!draw) { sec.hidden = true; return; }
+    sec.hidden = false;
+
+    const done = draw.recorded && state.matches.find(m => m.id === draw.recorded);
+    if (done) {
+      const card = h('div', { class: 'recorded' },
+        h('strong', null, outcomeLabel(done)),
+        h('p', null, done.winner === -1
+          ? 'Résultat enregistré : 1 point pour chaque joueur.'
+          : 'Résultat enregistré : 3 points pour ' + done.teams[done.winner].map(p => p.name).join(', ') + '.')
+      );
+      if (done.winner !== -1) paint(card, done.winner);
+      const undo = h('button', { type: 'button', class: 'btn small' }, 'Annuler ce résultat');
+      const again = h('button', { type: 'button', class: 'btn small' }, 'Rejouer avec les mêmes équipes');
+      const see = h('button', { type: 'button', class: 'btn small' }, 'Voir le classement');
+      undo.addEventListener('click', () => deleteMatch(done.id));
+      again.addEventListener('click', () => { draw.recorded = null; persist(); renderEnd(); });
+      see.addEventListener('click', () => show('ranking'));
+      card.append(h('div', { class: 'tools' }, see, again, undo));
+      body.append(card);
+      return;
+    }
+
+    body.append(h('p', { class: 'legend' }, 'Qui a gagné ? Chaque joueur de l’équipe gagnante prend 3 points au classement MVP.'));
+    const grid = h('div', { class: 'winners' });
+    draw.teams.forEach((t, i) => {
+      const b = paint(h('button', { type: 'button', class: 'win' }, BIBS[i].name, h('small', null, 'a gagné')), i);
+      b.addEventListener('click', () => recordMatch(i));
+      grid.append(b);
+    });
+    const nul = h('button', { type: 'button', class: 'win draw' }, 'Match nul', h('small', null, '1 point chacun'));
+    nul.addEventListener('click', () => recordMatch(-1));
+    grid.append(nul);
+    body.append(grid);
+  }
+
+  /* ================= Classement ================= */
+  let confirmReset = false, confirmTimer = null;
+
+  function renderRanking() {
+    const box = $('#ranking');
+    box.textContent = '';
+    const n = state.matches.length;
+    $('#match-count').textContent = plural(n, 'match') + ' joué' + (n > 1 ? 's' : '');
+    $('#history-sec').hidden = n === 0;
+    if (n === 0) {
+      box.append(h('div', { class: 'empty' }, 'Pas encore de match. Génère les équipes, puis désigne les vainqueurs à la fin du match : le classement se remplit tout seul.'));
+      return;
+    }
+    const table = standings(state.matches, state.players);
+    const leaders = table.filter(r => r.rank === 1);
+    box.append(h('div', { class: 'podium' },
+      h('span', { class: 'medal', 'aria-hidden': 'true' }, '🏆'),
+      h('div', { class: 'who' },
+        h('div', { class: 'lab' }, leaders.length > 1 ? 'MVP ex æquo' : 'MVP'),
+        h('div', { class: 'name' }, leaders.map(r => r.name).join(' · ')),
+        h('div', { class: 'stat' }, plural(leaders[0].points, 'point') + ' · ' + plural(leaders[0].wins, 'victoire') + ' en ' + plural(leaders[0].played, 'match'))
+      )
+    ));
+    box.append(h('div', { class: 'table-wrap' }, h('table', null,
+      h('thead', null, h('tr', null,
+        h('th', { scope: 'col' }, '#'), h('th', { scope: 'col' }, 'Joueur'),
+        h('th', { scope: 'col', title: 'Matchs joués' }, 'J'), h('th', { scope: 'col', title: 'Victoires' }, 'V'),
+        h('th', { scope: 'col', title: 'Nuls' }, 'N'), h('th', { scope: 'col', title: 'Défaites' }, 'D'),
+        h('th', { scope: 'col', title: 'Taux de victoires' }, '%'), h('th', { scope: 'col' }, 'Pts'))),
+      h('tbody', null, table.map(r => h('tr', { class: r.rank === 1 ? 'first' : '' },
+        h('td', null, r.rank),
+        h('td', null, r.name, r.gone ? h('span', { class: 'gone' }, ' (retiré)') : null),
+        h('td', null, r.played), h('td', null, r.wins), h('td', null, r.draws), h('td', null, r.losses),
+        h('td', null, Math.round(r.rate * 100)),
+        h('td', { class: 'pts' }, r.points)
+      )))
+    )));
+
+    const hist = $('#history');
+    hist.textContent = '';
+    state.matches.slice().reverse().forEach(m => {
+      const when = new Date(m.date).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+      const who = m.winner === -1 ? plural(m.teams.length, 'équipe') : m.teams[m.winner].map(p => p.name).join(', ');
+      const del = h('button', { type: 'button', class: 'sbtn del', 'aria-label': 'Supprimer ce match' }, '×');
+      del.addEventListener('click', () => deleteMatch(m.id));
+      const dot = h('span', { class: 'dot' });
+      if (m.winner !== -1) paint(dot, m.winner);
+      hist.append(h('li', { class: 'hrow' }, dot,
+        h('div', null, h('div', { class: 'what' }, outcomeLabel(m)), h('div', { class: 'when' }, when + ' · ' + who)),
+        del));
+    });
+  }
+
+  /* ================= Navigation ================= */
+  const VIEWS = ['players', 'match', 'ranking'];
+  function show(view) {
+    if (!VIEWS.includes(view)) view = 'players';
+    VIEWS.forEach(v => { $('#view-' + v).hidden = v !== view; });
+    document.querySelectorAll('.tabs button').forEach(b => {
+      if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
+    if (location.hash !== '#' + view) history.replaceState(null, '', '#' + view);
+    window.scrollTo(0, 0);
+  }
+
+  /* ================= Démarrage ================= */
+  function init() {
+    load();
+
+    const sel = $('#new-level');
+    for (let i = 1; i <= 10; i++) sel.append(h('option', { value: i }, 'Note ' + i));
+    sel.value = '5';
+
+    [2, 3, 4].forEach(n => {
+      const b = h('button', { type: 'button', 'data-k': n, 'aria-pressed': 'false', 'aria-label': n + ' équipes' }, n);
+      b.addEventListener('click', () => { state.k = n; state.kAuto = false; persist(); renderSummary(); });
+      $('#seg').append(b);
+    });
+
+    $('#add').addEventListener('submit', ev => {
+      ev.preventDefault();
+      const input = $('#new-name');
+      const name = input.value.trim();
+      if (!name) return;
+      state.players.push({ id: newId('p'), name: name, level: Number(sel.value), present: true });
+      persist();
+      renderPlayers();
+      renderSummary();
+      input.value = '';
+      input.focus();
+    });
+    const setAll = v => { state.players.forEach(p => { p.present = v; }); persist(); renderPlayers(); renderSummary(); };
+    $('#all').addEventListener('click', () => setAll(true));
+    $('#none').addEventListener('click', () => setAll(false));
+    $('#to-match').addEventListener('click', () => show('match'));
+    $('#go').addEventListener('click', runDraw);
+
+    $('#reset-season').addEventListener('click', ev => {
+      const btn = ev.currentTarget;
+      const label = 'Remettre le classement à zéro';
+      if (!confirmReset) {
+        confirmReset = true;
+        btn.textContent = 'Confirmer : effacer tous les matchs';
+        clearTimeout(confirmTimer);
+        confirmTimer = setTimeout(() => { confirmReset = false; btn.textContent = label; }, 4000);
+        return;
+      }
+      confirmReset = false;
+      clearTimeout(confirmTimer);
+      btn.textContent = label;
+      state.matches = [];
+      if (state.draw) state.draw.recorded = null;
+      persist();
+      renderEnd();
+      renderRanking();
+    });
+
+    document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => show(b.dataset.view)));
+    window.addEventListener('hashchange', () => show(location.hash.slice(1)));
+
+    renderPlayers();
+    renderDraw();
+    renderSummary();
+    renderRanking();
+    show(location.hash.slice(1) || 'players');
+
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+      navigator.serviceWorker.register('sw.js').catch(() => { /* l'appli marche aussi sans */ });
+    }
+  }
+
+  init();
+})();

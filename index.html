@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>FC Boissons</title>
+  <meta name="description" content="Joueurs, notes, tirage d'équipes équilibrées et classement MVP.">
+  <meta name="theme-color" content="#1E7A4C">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <svg viewBox="0 0 64 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" aria-hidden="true">
+      <rect x="2" y="2" width="60" height="36" rx="3"></rect>
+      <line x1="32" y1="2" x2="32" y2="38"></line>
+      <circle cx="32" cy="20" r="7"></circle>
+    </svg>
+    <div>
+      <h1>FC Boissons</h1>
+      <p class="sub">Les joueurs, le tirage, le classement.</p>
+    </div>
+  </header>
+
+  <!-- ===== Joueurs ===== -->
+  <div class="view" id="view-players">
+    <section aria-labelledby="h-roster">
+      <div class="sec-head">
+        <h2 id="h-roster">Joueurs</h2>
+        <span class="count" id="count" aria-live="polite"></span>
+      </div>
+      <p class="legend">Note de 1 à 10 : 1 pour un débutant, 10 pour le meilleur du groupe. Coche les présents du jour.</p>
+
+      <form class="add" id="add" autocomplete="off">
+        <input type="text" id="new-name" maxlength="30" placeholder="Prénom du joueur" aria-label="Prénom du nouveau joueur" required>
+        <select id="new-level" aria-label="Note du nouveau joueur"></select>
+        <button type="submit" class="primary-sm">Ajouter</button>
+      </form>
+      <p class="status" id="status" aria-live="polite"></p>
+
+      <div class="tools" id="tools">
+        <button type="button" class="btn small" id="all">Tout cocher</button>
+        <button type="button" class="btn small" id="none">Tout décocher</button>
+      </div>
+
+      <ul class="list" id="list" aria-label="Liste des joueurs"></ul>
+      <div class="empty" id="empty" hidden>Aucun joueur pour le moment. Ajoute ton groupe ci-dessus.</div>
+
+      <button type="button" class="go" id="to-match">Passer au tirage</button>
+    </section>
+  </div>
+
+  <!-- ===== Match ===== -->
+  <div class="view" id="view-match" hidden>
+    <section aria-labelledby="h-draw">
+      <h2 id="h-draw">Tirage</h2>
+      <div class="seg" role="group" aria-label="Nombre d'équipes" id="seg">
+        <span class="lbl">Équipes</span>
+      </div>
+      <p class="hint" id="hint"></p>
+      <p class="legend">Couleurs fixes : rouge, bleu, blanc, noir. Jamais deux joueurs à 10 dans la même équipe.</p>
+      <button type="button" class="go" id="go">Générer les équipes</button>
+      <div class="result" id="result" hidden></div>
+    </section>
+
+    <section aria-labelledby="h-end" id="end" hidden>
+      <h2 id="h-end">Fin du match</h2>
+      <div id="end-body"></div>
+    </section>
+  </div>
+
+  <!-- ===== Classement ===== -->
+  <div class="view" id="view-ranking" hidden>
+    <section aria-labelledby="h-rank">
+      <div class="sec-head">
+        <h2 id="h-rank">Classement MVP</h2>
+        <span class="count" id="match-count"></span>
+      </div>
+      <p class="legend">Une victoire rapporte 3 points, un nul 1 point. À égalité, le meilleur taux de victoires passe devant.</p>
+      <div id="ranking"></div>
+    </section>
+
+    <section aria-labelledby="h-hist" id="history-sec" hidden>
+      <h2 id="h-hist">Matchs joués</h2>
+      <ul class="list" id="history"></ul>
+      <div class="tools">
+        <button type="button" class="btn small danger" id="reset-season">Remettre le classement à zéro</button>
+      </div>
+    </section>
+  </div>
+</main>
+
+<nav class="tabs" aria-label="Sections">
+  <button type="button" data-view="players" aria-current="page">Joueurs</button>
+  <button type="button" data-view="match">Match</button>
+  <button type="button" data-view="ranking">Classement</button>
+</nav>
+
+<script src="app.js"></script>
+</body>
+</html>
