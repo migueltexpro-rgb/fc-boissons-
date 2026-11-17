@@ -131,6 +131,17 @@
         <button type="submit" class="primary-sm">Enregistrer</button>
       </form>
       <p class="status" id="bonus-status" aria-live="polite"></p>
+      <div class="tools">
+        <button type="button" class="btn small" id="points-open">Coller une liste de points</button>
+      </div>
+      <div class="paste" id="points-panel" hidden>
+        <p class="legend">Une ligne par joueur, du type « +3 Prénom ». Le nombre devient le total de points hors appli du joueur pour le semestre affiché.</p>
+        <textarea class="fallback" id="points-text" aria-label="Liste de points" placeholder="+8 Morgan&#10;+6 Igor&#10;+4 Axel"></textarea>
+        <div class="res-actions">
+          <button type="button" class="btn" id="points-apply">Enregistrer ces points</button>
+        </div>
+        <div class="paste-result" id="points-result" hidden></div>
+      </div>
     </section>
 
     <section aria-labelledby="h-hist" id="history-sec" hidden>

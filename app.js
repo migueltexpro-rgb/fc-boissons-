@@ -970,6 +970,71 @@
     if (p && document.activeElement !== input) input.value = (p.pts && p.pts[v.keys[0]]) || 0;
   }
 
+  /* Liste de points collée (« +8 Morgan ») pour le semestre affiché. */
+  function parsePoints(text) {
+    const out = [];
+    String(text).split(/[\n,;]+/).forEach(raw => {
+      const m = raw.match(/^[^\p{L}\p{N}+]*\+?\s*(\d{1,3})\s*(?:pts?|points?)?\s*[-:.)]?\s*(\p{L}.*)$/u)
+        || raw.match(/^[^\p{L}\p{N}]*(\p{L}.*?)\s*[-:]?\s*\+?\s*(\d{1,3})\s*(?:pts?|points?)?\s*$/u);
+      if (!m) return;
+      const first = /^\d/.test(m[1]);
+      const label = (first ? m[2] : m[1]).replace(/[^\p{L}\p{N}.' _-]+/gu, ' ').trim().slice(0, 30);
+      const pts = Number(first ? m[1] : m[2]);
+      if (label && normName(label)) out.push({ label: label, key: normName(label), pts: pts });
+    });
+    return out;
+  }
+  function applyPointsList(text) {
+    const v = viewed();
+    const k = v.keys[0];
+    const items = parsePoints(text);
+    const box = $('#points-result');
+    box.textContent = '';
+    box.hidden = false;
+    if (v.scope === 'year') return;
+    if (!items.length) { box.append(h('p', { class: 'note' }, 'Aucune ligne du type « +3 Prénom » trouvée dans ce texte.')); return; }
+    const setPts = (p, n) => { p.pts = p.pts || {}; if (n > 0) p.pts[k] = n; else delete p.pts[k]; };
+    let done = 0;
+    const later = [];
+    items.forEach(it => {
+      const c = candidatesFor(it.key);
+      if (c.length === 1) { setPts(c[0], it.pts); done++; } else later.push({ it: it, options: c });
+    });
+    persist();
+    renderRanking();
+    box.append(h('p', { class: 'note' }, plural(done, 'joueur') + ' mis à jour pour le ' + v.label.toLowerCase().replace(' · ', ' ') + '.' +
+      (later.length ? ' Il reste ' + plural(later.length, 'nom') + ' à traiter ci-dessous.' : '')));
+    later.forEach(l => {
+      const it = l.it;
+      const row = h('div', { class: 'paste-row' });
+      const finish = text => { row.textContent = ''; row.append(h('span', null, text)); };
+      if (l.options.length) {
+        row.append(h('span', null, '« ' + it.label + ' » (+' + it.pts + ') : lequel ?'));
+        l.options.forEach(p => {
+          const b = h('button', { type: 'button', class: 'btn small' }, p.name);
+          b.addEventListener('click', () => {
+            const cur = player(p.id);
+            if (cur) { setPts(cur, it.pts); persist(); renderRanking(); }
+            finish(p.name + ' : ' + plural(it.pts, 'point') + '.');
+          });
+          row.append(b);
+        });
+      } else {
+        row.append(h('span', null, '« ' + it.label + ' » (+' + it.pts + ') : introuvable.'));
+      }
+      const add = h('button', { type: 'button', class: 'btn small' }, l.options.length ? 'Aucun : nouveau joueur' : 'Ajouter comme nouveau joueur');
+      add.addEventListener('click', () => {
+        const p = { id: newId('p'), name: it.label, level: 5, present: false, pts: {} };
+        setPts(p, it.pts);
+        state.players.push(p);
+        persist(); renderPlayers(); renderSummary(); renderRanking();
+        finish(it.label + ' ajouté avec ' + plural(it.pts, 'point') + '.');
+      });
+      row.append(add);
+      box.append(row);
+    });
+  }
+
   /* Clôture : rien n'est effacé, les prochains matchs comptent pour la période suivante. */
   let closeArmed = false, closeTimer = null;
   function closeLabel() {
@@ -1104,7 +1169,7 @@
       renderRanking();
     });
 
-    $('#rank-seg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { rv.scope = b.dataset.scope; $('#bonus-status').textContent = ''; renderRanking(); }));
+    $('#rank-seg').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { rv.scope = b.dataset.scope; $('#bonus-status').textContent = ''; $('#points-result').hidden = true; renderRanking(); }));
     $('#rank-season').addEventListener('change', ev => { rv.season = ev.target.value; renderRanking(); });
     $('#close-period').addEventListener('click', ev => {
       const btn = ev.currentTarget;
@@ -1139,6 +1204,18 @@
       if (!r) { $('#backup-status').textContent = 'Ce texte n’est pas une sauvegarde FC Boissons.'; return; }
       box.value = '';
       $('#backup-status').textContent = 'Import terminé : ' + plural(r.players, 'joueur') + ' et ' + plural(r.matches, 'match') + ' ajoutés ou mis à jour.';
+    });
+
+    $('#points-open').addEventListener('click', () => {
+      const panel = $('#points-panel');
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) $('#points-text').focus();
+    });
+    $('#points-apply').addEventListener('click', () => {
+      const box = $('#points-text');
+      if (!box.value.trim()) { box.focus(); return; }
+      applyPointsList(box.value);
+      box.value = '';
     });
 
     $('#bonus-player').addEventListener('change', () => { $('#bonus-value').blur(); renderBonusForm(); });
