@@ -267,3 +267,39 @@ tr.first td:first-child { color: var(--gold); font-weight: 700; }
 .tabs button[aria-current="page"] { color: var(--accent); border-top-color: var(--accent); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
+
+/* Lecture seule : les invités voient équipes, classement et cartes, sans les notes ni les commandes */
+.role { display: inline-block; margin-left: 4px; padding: 1px 8px; border-radius: 999px; background: var(--soft); color: var(--fg); font-weight: 600; font-size: 12px; }
+.lecture .edit-only, .lecture #add, .lecture #tools, .lecture #paste-panel, .lecture .step, .lecture .sbtn.del,
+.lecture .chk, .lecture #to-match, .lecture #seg, .lecture #hint, .lecture #go, .lecture #end, .lecture #bonus-sec,
+.lecture #reset-season, .lecture .team .n, .lecture .team footer, .lecture .res-actions .check, .lecture #sort option[value="level"],
+.lecture #view-players .legend, .lecture #view-match .legend { display: none !important; }
+.lecture .row { grid-template-columns: minmax(0, 1fr); padding-left: 6px; }
+.lecture .prof { grid-column: 1 / -1; }
+.lecture .nm { pointer-events: none; }
+
+/* Noms qui ouvrent une carte */
+.cardlink { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 3px; text-decoration-thickness: 2px; text-align: left; }
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* Fiche carte */
+.sheet-open, .sheet-open body { overflow: hidden; }
+.sheet {
+  position: fixed; inset: 0; z-index: 30; background: rgba(8, 14, 10, 0.62);
+  display: flex; align-items: center; justify-content: center;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.sheet-box {
+  width: 100%; max-width: 440px; max-height: 100%; overflow-y: auto; background: var(--surface); color: var(--fg);
+  border-radius: 16px; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sheet-head h2 { min-width: 0; overflow-wrap: anywhere; }
+.sheet-card { display: flex; justify-content: center; }
+.card-img { display: block; width: 100%; max-width: 380px; max-height: 64vh; object-fit: contain; border-radius: 12px; }
+.card-empty {
+  width: 100%; max-width: 300px; aspect-ratio: 2 / 3; border: 1px dashed var(--line); border-radius: 14px; background: var(--soft);
+  display: grid; place-items: center; text-align: center; padding: 16px; color: var(--muted); font-size: 15px;
+}
+.sheet-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.sheet-tags:empty { display: none; }

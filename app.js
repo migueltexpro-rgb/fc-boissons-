@@ -274,6 +274,7 @@
     if (c === 'players') state.players.forEach(p => {
       const d = { name: p.name, level: p.level, present: !!p.present };
       if (p.tags && p.tags.length) d.tags = p.tags;
+      if (p.card) d.card = true;
       if (p.pts && Object.keys(p.pts).length) d.pts = p.pts;
       m.set(p.id, d);
     });
@@ -286,7 +287,7 @@
   }
   function applyDocs(c, m) {
     if (c === 'players') {
-      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present, pts: cleanPts(d.pts, d.bonus), tags: cleanTags(d.tags) }));
+      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present, pts: cleanPts(d.pts, d.bonus), tags: cleanTags(d.tags), card: !!d.card }));
     } else if (c === 'matches') {
       state.matches = [...m].map(([id, d]) => Object.assign(clone(d), { id: id })).filter(validMatch)
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -321,7 +322,7 @@
       readOnly = true;
       COLLS.forEach(c => { mirror[c] = new Map(remote[c]); applyDocs(c, remote[c]); });
       renderAll();
-      setSync('Tu peux consulter, mais pas modifier : demande au propriétaire de la page de te donner le droit de modification.');
+      if (!viewer) setSync('Tu peux consulter, mais pas modifier : demande à l’organisateur de te donner le droit de modification.');
     } else if (code === 'quota_exceeded') {
       setSync('L’espace partagé est plein : supprime d’anciens matchs pour pouvoir enregistrer.');
     } else {
@@ -383,6 +384,33 @@
       })
     };
   }
+  /* Lecture seule : les joueurs invités voient tout sauf les notes, et ne peuvent rien modifier. */
+  let viewer = false;
+  function setViewer(v) {
+    viewer = v;
+    if (v) readOnly = true;
+    document.documentElement.classList.toggle('lecture', v);
+    $('#auth-role').textContent = v ? 'Lecture seule' : '';
+    $('#auth-role').hidden = !v;
+    renderAll();
+  }
+
+  /* Cartes de joueur : une image par joueur, chargée seulement quand on l'ouvre. */
+  const cardCache = new Map();
+  const CARD_KEY = id => 'fc-boissons-carte-' + id;
+  let cardStore = {
+    get: id => { try { return Promise.resolve(localStorage.getItem(CARD_KEY(id))); } catch (e) { return Promise.resolve(null); } },
+    set: (id, img) => { try { localStorage.setItem(CARD_KEY(id), img); return Promise.resolve(); } catch (e) { return Promise.reject({ code: 'local-full' }); } },
+    del: id => { try { localStorage.removeItem(CARD_KEY(id)); } catch (e) { /* rien */ } return Promise.resolve(); }
+  };
+  function firebaseCards(fs) {
+    return {
+      get: id => fs.collection('cartes').doc(id).get().then(d => (d.exists ? (d.data() || {}).img || null : null)),
+      set: (id, img) => fs.collection('cartes').doc(id).set({ img: img }),
+      del: id => fs.collection('cartes').doc(id).delete()
+    };
+  }
+
   function resetShared() {
     unsubs.forEach(off => off());
     unsubs = [];
@@ -417,6 +445,7 @@
     auth.onAuthStateChanged(user => {
       resetShared();
       if (!user) {
+        setViewer(false);
         mode = 'loading';
         playersLoaded = true;
         who.textContent = '';
@@ -429,7 +458,16 @@
       btn.textContent = 'Se déconnecter';
       setSync('');
       db = firestoreAdapter(fs);
+      cardStore = firebaseCards(fs);
+      cardCache.clear();
       mode = 'db';
+      /* Seuls les organisateurs ont le droit de lire roles/editeur (voir firestore.rules). */
+      setViewer(true);
+      try {
+        fs.collection('roles').doc('editeur').get()
+          .then(() => { readOnly = false; setViewer(false); })
+          .catch(e => { if (!(e && e.code === 'permission-denied')) { readOnly = false; setViewer(false); } });
+      } catch (e) { readOnly = false; setViewer(false); }
       playersLoaded = false;
       renderAll();
       $('#sub').textContent = 'Les joueurs, le tirage, le classement. Partagés en direct.';
@@ -506,7 +544,7 @@
     };
     prof.addEventListener('click', ev => {
       const b = ev.target.closest('button');
-      if (!b) return;
+      if (!b || b.dataset.card) return;
       const p = player(id);
       if (b.dataset.tag) {
         const on = (p.tags || []).includes(b.dataset.tag);
@@ -564,7 +602,7 @@
   function renderProfile(r, p) {
     const tags = p.tags || [];
     const open = editing === p.id;
-    const sig = (open ? 'e:' : 'v:') + tags.join(',') + ':' + p.name;
+    const sig = (open ? 'e:' : 'v:') + tags.join(',') + ':' + p.name + ':' + (p.card ? 1 : 0) + (viewer ? 'l' : 'o');
     if (r.prof.dataset.sig === sig) return;
     r.prof.dataset.sig = sig;
     r.prof.textContent = '';
@@ -573,7 +611,10 @@
       r.prof.append(h('button', { type: 'button', class: 'tag-edit' }, 'OK'));
     } else {
       tags.forEach(id => { const t = TAGS.find(x => x.id === id); r.prof.append(h('span', { class: 'tag tag-' + id }, t.label)); });
-      r.prof.append(h('button', { type: 'button', class: 'tag-edit', 'aria-label': 'Profil de ' + p.name }, tags.length ? 'Modifier' : '+ Profil'));
+      if (!viewer) r.prof.append(h('button', { type: 'button', class: 'tag-edit', 'aria-label': 'Profil de ' + p.name }, tags.length ? 'Modifier' : '+ Profil'));
+    }
+    if (!open && (p.card || !viewer)) {
+      r.prof.append(h('button', { type: 'button', class: 'tag-edit card-btn', 'data-card': p.id, 'aria-label': 'Carte de ' + p.name }, p.card ? 'Voir la carte' : '+ Carte'));
     }
   }
   function renderPlayers(keepOrder) {
@@ -592,6 +633,8 @@
       r.cb.checked = !!p.present;
       r.el.classList.toggle('off', !p.present);
       if (document.activeElement !== r.nameIn) r.nameIn.value = p.name;
+      r.nameIn.readOnly = viewer;
+      r.cb.disabled = viewer;
       r.val.textContent = p.level;
       renderProfile(r, p);
       r.cb.setAttribute('aria-label', 'Présent : ' + p.name);
@@ -717,6 +760,99 @@
     if (stale) stale.hidden = !state.draw || state.draw.key === keyFor(pool, k);
   }
 
+  function nameLink(id, name) {
+    const p = player(id);
+    return p && p.card ? h('button', { type: 'button', class: 'cardlink', 'data-card': id }, name) : name;
+  }
+
+  /* ---------- Fiche carte ---------- */
+  let sheetId = null, removeArmed = false;
+  async function openCard(id) {
+    const p = player(id);
+    if (!p) return;
+    sheetId = id;
+    removeArmed = false;
+    $('#sheet-name').textContent = p.name;
+    $('#card-status').textContent = '';
+    const tags = $('#sheet-tags');
+    tags.textContent = '';
+    cleanTags(p.tags).forEach(t => tags.append(h('span', { class: 'tag tag-' + t }, TAGS.find(x => x.id === t).label)));
+    $('#card-pick').textContent = p.card ? 'Remplacer la carte' : 'Ajouter une carte';
+    $('#card-remove').hidden = !p.card;
+    $('#card-remove').textContent = 'Retirer la carte';
+    const box = $('#sheet-card');
+    box.textContent = '';
+    $('#sheet').hidden = false;
+    document.documentElement.classList.add('sheet-open');
+    $('#sheet-close').focus();
+    if (!p.card) { box.append(h('div', { class: 'card-empty' }, viewer ? 'Pas encore de carte.' : 'Pas encore de carte. Ajoute une image (la carte toute faite, ou une photo).')); return; }
+    box.append(h('div', { class: 'card-empty' }, 'Chargement de la carte…'));
+    let img = cardCache.get(id);
+    if (!img) {
+      try { img = await cardStore.get(id); } catch (e) { img = null; }
+      if (img) cardCache.set(id, img);
+    }
+    if (sheetId !== id) return;
+    box.textContent = '';
+    box.append(img ? h('img', { src: img, alt: 'Carte de ' + p.name, class: 'card-img' })
+      : h('div', { class: 'card-empty' }, 'La carte n’a pas pu être chargée. Vérifie ta connexion et réessaie.'));
+  }
+  function closeCard() {
+    $('#sheet').hidden = true;
+    document.documentElement.classList.remove('sheet-open');
+    sheetId = null;
+  }
+  /* Réduit l'image (une carte fait ~1024×1536) pour tenir dans un document Firestore (< 1 Mo). */
+  function shrinkImage(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const im = new Image();
+      im.onload = () => {
+        URL.revokeObjectURL(url);
+        const scale = Math.min(1, 720 / im.width, 1080 / im.height);
+        const c = document.createElement('canvas');
+        c.width = Math.round(im.width * scale); c.height = Math.round(im.height * scale);
+        const g = c.getContext('2d');
+        g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, c.width, c.height);
+        g.drawImage(im, 0, 0, c.width, c.height);
+        let q = 0.86, out = c.toDataURL('image/jpeg', q);
+        while (out.length > 700000 && q > 0.4) { q -= 0.1; out = c.toDataURL('image/jpeg', q); }
+        out.length > 700000 ? reject(new Error('trop lourde')) : resolve(out);
+      };
+      im.onerror = () => { URL.revokeObjectURL(url); reject(new Error('illisible')); };
+      im.src = url;
+    });
+  }
+  async function uploadCard(file) {
+    const id = sheetId, p = player(id);
+    if (!p || !file || viewer) return;
+    const st = $('#card-status');
+    st.textContent = 'Préparation de l’image…';
+    let img;
+    try { img = await shrinkImage(file); } catch (e) { st.textContent = 'Cette image n’a pas pu être lue. Essaie avec une capture d’écran de la carte.'; return; }
+    st.textContent = 'Envoi de la carte…';
+    try { await cardStore.set(id, img); } catch (e) {
+      st.textContent = e && e.code === 'permission-denied' ? 'Tu n’as pas le droit de modifier les cartes.' : 'La carte n’a pas pu être enregistrée. Vérifie ta connexion et réessaie.';
+      return;
+    }
+    cardCache.set(id, img);
+    p.card = true;
+    persist();
+    renderAll();
+    if (sheetId === id) { await openCard(id); $('#card-status').textContent = 'Carte enregistrée.'; }
+  }
+  async function removeCard() {
+    const id = sheetId, p = player(id);
+    if (!p || viewer) return;
+    if (!removeArmed) { removeArmed = true; $('#card-remove').textContent = 'Confirmer : retirer la carte'; return; }
+    try { await cardStore.del(id); } catch (e) { $('#card-status').textContent = 'La carte n’a pas pu être retirée. Réessaie.'; return; }
+    cardCache.delete(id);
+    p.card = false;
+    persist();
+    renderAll();
+    if (sheetId === id) { await openCard(id); $('#card-status').textContent = 'Carte retirée.'; }
+  }
+
   function mixOf(team) {
     const parts = TAGS.map(t => ({ t: t, n: team.filter(p => cleanTags(p.tags).includes(t.id)).length })).filter(x => x.n)
       .map(x => x.n + ' ' + (x.n > 1 ? x.t.plural : x.t.label.toLowerCase()));
@@ -748,7 +884,7 @@
       grid.append(paint(h('article', { class: 'team' },
         h('header', null, h('h3', null, BIBS[i].name), h('span', null, t.length + ' joueurs')),
         h('ul', null, t.map(p => h('li', null,
-          h('span', { class: 'who' }, p.name, cleanTags(p.tags).map(id => h('span', { class: 'tag tag-' + id }, TAGS.find(x => x.id === id).label))),
+          h('span', { class: 'who' }, nameLink(p.id, p.name), cleanTags(p.tags).map(id => h('span', { class: 'tag tag-' + id }, TAGS.find(x => x.id === id).label))),
           h('span', { class: 'n' }, p.level)))),
         mixOf(t),
         h('footer', null, 'Total ' + total + ' · moyenne ' + fmt(total / t.length))
@@ -1004,7 +1140,7 @@
           h('th', { scope: 'col', title: 'Points MVP' }, 'MVP'))),
         h('tbody', null, table.map(r => h('tr', { class: r.rank === 1 && r.mvp > 0 ? 'first' : '' },
           h('td', null, r.rank),
-          h('td', null, r.name, r.gone ? h('span', { class: 'gone' }, ' (retiré)') : null),
+          h('td', null, nameLink(r.id, r.name), r.gone ? h('span', { class: 'gone' }, ' (retiré)') : null),
           h('td', null, r.played), h('td', null, r.wins),
           h('td', { class: 'pts' }, r.mvp)
         )))
@@ -1208,6 +1344,15 @@
     $('#all').addEventListener('click', () => setAll(true));
     $('#none').addEventListener('click', () => setAll(false));
     $('#to-match').addEventListener('click', () => show('match'));
+    document.addEventListener('click', ev => {
+      const b = ev.target.closest('[data-card]');
+      if (b) { ev.preventDefault(); openCard(b.dataset.card); }
+    });
+    $('#sheet-close').addEventListener('click', closeCard);
+    $('#sheet').addEventListener('click', ev => { if (ev.target === ev.currentTarget) closeCard(); });
+    document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !$('#sheet').hidden) closeCard(); });
+    $('#card-file').addEventListener('change', ev => { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; uploadCard(f); });
+    $('#card-remove').addEventListener('click', removeCard);
     $('#sort').addEventListener('change', ev => { state.sort = ev.target.value; persist(); renderPlayers(); });
     $('#paste-open').addEventListener('click', () => {
       const panel = $('#paste-panel');

@@ -26,7 +26,7 @@
       <p class="sub" id="sub">Les joueurs, le tirage, le classement.</p>
     </div>
   </header>
-  <div class="auth" id="auth" hidden><span id="auth-who"></span><button type="button" class="btn small" id="auth-btn">Se connecter avec Google</button></div>
+  <div class="auth" id="auth" hidden><span><span id="auth-who"></span> <span class="role" id="auth-role" hidden></span></span><button type="button" class="btn small" id="auth-btn">Se connecter avec Google</button></div>
   <p class="note" id="sync" role="status" hidden></p>
 
   <!-- ===== Joueurs ===== -->
@@ -146,7 +146,7 @@
       </div>
     </section>
 
-    <section aria-labelledby="h-close">
+    <section class="edit-only" aria-labelledby="h-close">
       <h2 id="h-close">Clôture</h2>
       <p class="legend" id="close-now"></p>
       <div class="tools">
@@ -155,7 +155,7 @@
       <p class="status" id="close-status" aria-live="polite"></p>
     </section>
 
-    <section aria-labelledby="h-backup">
+    <section class="edit-only" aria-labelledby="h-backup">
       <h2 id="h-backup">Sauvegarde</h2>
       <p class="legend">Copie tous les joueurs, matchs et points en texte, pour les garder ou les importer dans une autre installation de l’appli.</p>
       <div class="tools">
@@ -167,6 +167,23 @@
     </section>
   </div>
 </main>
+
+<div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-name">
+  <div class="sheet-box">
+    <div class="sheet-head">
+      <h2 id="sheet-name"></h2>
+      <button type="button" class="sbtn" id="sheet-close" aria-label="Fermer">×</button>
+    </div>
+    <div class="sheet-card" id="sheet-card"></div>
+    <div class="sheet-tags" id="sheet-tags"></div>
+    <div class="tools edit-only">
+      <label class="btn small" for="card-file" id="card-pick">Ajouter une carte</label>
+      <input type="file" id="card-file" class="vh" accept="image/*">
+      <button type="button" class="btn small danger" id="card-remove">Retirer la carte</button>
+    </div>
+    <p class="status" id="card-status" aria-live="polite"></p>
+  </div>
+</div>
 
 <nav class="tabs" aria-label="Sections">
   <button type="button" data-view="players" aria-current="page">Joueurs</button>

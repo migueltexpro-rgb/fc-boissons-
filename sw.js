@@ -1,5 +1,5 @@
 /* Réseau d'abord, cache en secours : l'appli reste utilisable sans connexion au bord du terrain. */
-const CACHE = 'fc-boissons-v18';
+const CACHE = 'fc-boissons-v19';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'firebase-config.js', 'vendor/firebase-app-compat.js', 'vendor/firebase-auth-compat.js', 'vendor/firebase-firestore-compat.js', 'ballon.svg', 'ballon-180.png', 'ballon-192.png', 'ballon-512.png', 'manifest.webmanifest'];
 
 self.addEventListener('install', e => {

@@ -1,18 +1,24 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Remplace les adresses ci-dessous par les comptes Google autorisés (un par ligne, entre guillemets, séparés par des virgules).
+    // Organisateurs : ils peuvent tout modifier. Mets leurs adresses Gmail ici.
     function autorise() {
       return request.auth != null
         && request.auth.token.email_verified == true
         && request.auth.token.email in [
           "adresse1@gmail.com",
-          "adresse2@gmail.com",
-          "adresse3@gmail.com"
+          "adresse2@gmail.com"
         ];
     }
-    match /players/{id} { allow read, write: if autorise(); }
-    match /matches/{id} { allow read, write: if autorise(); }
-    match /state/{id}   { allow read, write: if autorise(); }
+    // Joueurs : toute personne connectée avec un compte Google peut consulter.
+    function connecte() {
+      return request.auth != null;
+    }
+    match /players/{id} { allow read: if connecte(); allow write: if autorise(); }
+    match /matches/{id} { allow read: if connecte(); allow write: if autorise(); }
+    match /state/{id}   { allow read: if connecte(); allow write: if autorise(); }
+    match /cartes/{id}  { allow read: if connecte(); allow write: if autorise(); }
+    // Sert à l'appli pour savoir qui est organisateur.
+    match /roles/editeur { allow read: if autorise(); }
   }
 }
