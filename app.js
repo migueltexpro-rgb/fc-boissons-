@@ -398,15 +398,16 @@
   /* Cartes de joueur : une image par joueur, chargée seulement quand on l'ouvre. */
   const cardCache = new Map();
   const CARD_KEY = id => 'fc-boissons-carte-' + id;
+  const asCardDoc = v => (!v ? null : typeof v === 'string' ? (v.startsWith('data:') ? { img: v } : JSON.parse(v)) : v);
   let cardStore = {
-    get: id => { try { return Promise.resolve(localStorage.getItem(CARD_KEY(id))); } catch (e) { return Promise.resolve(null); } },
-    set: (id, img) => { try { localStorage.setItem(CARD_KEY(id), img); return Promise.resolve(); } catch (e) { return Promise.reject({ code: 'local-full' }); } },
+    get: id => { try { return Promise.resolve(asCardDoc(localStorage.getItem(CARD_KEY(id)))); } catch (e) { return Promise.resolve(null); } },
+    set: (id, doc) => { try { localStorage.setItem(CARD_KEY(id), JSON.stringify(doc)); return Promise.resolve(); } catch (e) { return Promise.reject({ code: 'local-full' }); } },
     del: id => { try { localStorage.removeItem(CARD_KEY(id)); } catch (e) { /* rien */ } return Promise.resolve(); }
   };
   function firebaseCards(fs) {
     return {
-      get: id => fs.collection('cartes').doc(id).get().then(d => (d.exists ? (d.data() || {}).img || null : null)),
-      set: (id, img) => fs.collection('cartes').doc(id).set({ img: img }),
+      get: id => fs.collection('cartes').doc(id).get().then(d => (d.exists ? asCardDoc(d.data()) : null)),
+      set: (id, doc) => fs.collection('cartes').doc(id).set(doc),
       del: id => fs.collection('cartes').doc(id).delete()
     };
   }
@@ -777,7 +778,8 @@
     const tags = $('#sheet-tags');
     tags.textContent = '';
     cleanTags(p.tags).forEach(t => tags.append(h('span', { class: 'tag tag-' + t }, TAGS.find(x => x.id === t).label)));
-    $('#card-pick').textContent = p.card ? 'Remplacer la carte' : 'Ajouter une carte';
+    $('#card-pick').textContent = p.card ? 'Remplacer par une image' : 'Importer une carte toute faite';
+    $('#gen-open').textContent = p.card ? 'Modifier dans le générateur' : 'Créer la carte avec une photo';
     $('#card-remove').hidden = !p.card;
     $('#card-remove').textContent = 'Retirer la carte';
     const box = $('#sheet-card');
@@ -787,17 +789,241 @@
     $('#sheet-close').focus();
     if (!p.card) { box.append(h('div', { class: 'card-empty' }, viewer ? 'Pas encore de carte.' : 'Pas encore de carte. Ajoute une image (la carte toute faite, ou une photo).')); return; }
     box.append(h('div', { class: 'card-empty' }, 'Chargement de la carte…'));
-    let img = cardCache.get(id);
-    if (!img) {
-      try { img = await cardStore.get(id); } catch (e) { img = null; }
-      if (img) cardCache.set(id, img);
+    let doc = cardCache.get(id);
+    if (!doc) {
+      try { doc = await cardStore.get(id); } catch (e) { doc = null; }
+      if (doc && doc.img) cardCache.set(id, doc);
     }
+    const img = doc && doc.img;
     if (sheetId !== id) return;
     box.textContent = '';
     box.append(img ? h('img', { src: img, alt: 'Carte de ' + p.name, class: 'card-img' })
       : h('div', { class: 'card-empty' }, 'La carte n’a pas pu être chargée. Vérifie ta connexion et réessaie.'));
   }
+  /* ================= Générateur de carte ================= */
+  const FLAGS = [['', 'Aucun'], ['🇫🇷', 'France'], ['🇵🇹', 'Portugal'], ['🇮🇹', 'Italie'], ['🇪🇸', 'Espagne'], ['🇧🇪', 'Belgique'], ['🇨🇭', 'Suisse'],
+    ['🇩🇪', 'Allemagne'], ['🇬🇧', 'Royaume-Uni'], ['🇮🇪', 'Irlande'], ['🇳🇱', 'Pays-Bas'], ['🇵🇱', 'Pologne'], ['🇷🇴', 'Roumanie'], ['🇬🇷', 'Grèce'],
+    ['🇹🇷', 'Turquie'], ['🇲🇦', 'Maroc'], ['🇩🇿', 'Algérie'], ['🇹🇳', 'Tunisie'], ['🇸🇳', 'Sénégal'], ['🇲🇱', 'Mali'], ['🇨🇮', 'Côte d’Ivoire'],
+    ['🇨🇲', 'Cameroun'], ['🇨🇩', 'RD Congo'], ['🇧🇷', 'Brésil'], ['🇦🇷', 'Argentine'], ['🇨🇴', 'Colombie'], ['🇲🇽', 'Mexique'], ['🇺🇸', 'États-Unis'],
+    ['🇱🇧', 'Liban'], ['🇮🇷', 'Iran'], ['🇨🇳', 'Chine'], ['🇯🇵', 'Japon'], ['🇻🇳', 'Vietnam'], ['🇱🇦', 'Laos'], ['🇵🇭', 'Philippines']];
+  const STAT_LABELS = ['RAP', 'END', 'TRI', 'SOC', 'CON', 'QUA', 'FLO', 'MAN'];
+  const CW = 720, CH = 1080;
+  let gen = null;            /* réglages en cours */
+  const genImgs = { photo: null, badge: null, logo: null };
+  function seeded(str) {
+    let x = 2166136261;
+    for (const ch of String(str)) x = Math.imul(x ^ ch.charCodeAt(0), 16777619);
+    return () => { x = Math.imul(x ^ (x >>> 15), 2246822507) ^ Math.imul(x ^ (x >>> 13), 3266489909); return ((x >>> 0) % 100000) / 100000; };
+  }
+  function defaultGen(p) {
+    const rating = clamp(Math.round(45 + p.level * 4.5), 1, 99);
+    const rnd = seeded(p.id);
+    return {
+      name: p.name.split(' ')[0].toUpperCase().slice(0, 14), nick: '', rating: rating, flag: '🇫🇷',
+      stats: STAT_LABELS.map(l => ({ l: l, v: clamp(rating + Math.round(rnd() * 8 - 4), 1, 99) })),
+      zoom: 1, dx: 0, dy: 0
+    };
+  }
+  function loadImg(src) {
+    return new Promise(res => { if (!src) return res(null); const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = src; });
+  }
+  function shieldPath(g, inset) {
+    const k = inset || 0;
+    g.beginPath();
+    g.moveTo(40 + k, 120 + k * 0.6);
+    g.lineTo(92 + k * 0.6, 58 + k);
+    g.lineTo(292, 58 + k);
+    g.quadraticCurveTo(330, 58 + k, 344, 32 + k);
+    g.lineTo(360, 12 + k);
+    g.lineTo(376, 32 + k);
+    g.quadraticCurveTo(390, 58 + k, 428, 58 + k);
+    g.lineTo(628 - k * 0.6, 58 + k);
+    g.lineTo(680 - k, 120 + k * 0.6);
+    g.lineTo(680 - k, 900);
+    g.quadraticCurveTo(680 - k, 962 - k * 0.4, 604 - k * 0.5, 990 - k * 0.6);
+    g.lineTo(402, 1040 - k);
+    g.quadraticCurveTo(360, 1056 - k, 318, 1040 - k);
+    g.lineTo(116 + k * 0.5, 990 - k * 0.6);
+    g.quadraticCurveTo(40 + k, 962 - k * 0.4, 40 + k, 900);
+    g.closePath();
+  }
+  function fitFont(g, text, weight, size, maxW) {
+    let s = size;
+    do { g.font = weight + ' ' + s + 'px "Barlow Condensed", "Arial Narrow", Arial, sans-serif'; s -= 2; } while (s > 18 && g.measureText(text).width > maxW);
+  }
+  function drawCard(cv, p, gs) {
+    const g = cv.getContext('2d');
+    g.save();
+    g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, CW, CH);
+    /* fond glacé */
+    shieldPath(g); g.save(); g.clip();
+    const bg = g.createLinearGradient(0, 0, CW, CH);
+    bg.addColorStop(0, '#2A4466'); bg.addColorStop(0.5, '#43648C'); bg.addColorStop(1, '#1E3150');
+    g.fillStyle = bg; g.fillRect(0, 0, CW, CH);
+    const rnd = seeded('glace' + p.id);
+    for (let i = 0; i < 170; i++) {
+      const x = rnd() * CW, y = rnd() * CH, r = 20 + rnd() * 70, n = 3 + Math.floor(rnd() * 3), a0 = rnd() * 6.28;
+      g.beginPath();
+      for (let j = 0; j < n; j++) { const a = a0 + j * 6.28 / n + rnd() * 0.6; g.lineTo(x + Math.cos(a) * r * (0.6 + rnd() * 0.5), y + Math.sin(a) * r * (0.6 + rnd() * 0.5)); }
+      g.closePath();
+      g.fillStyle = 'rgba(' + (rnd() < 0.5 ? '255,255,255' : '160,200,240') + ',' + (0.03 + rnd() * 0.12).toFixed(3) + ')';
+      g.fill();
+      g.strokeStyle = 'rgba(255,255,255,' + (0.08 + rnd() * 0.18).toFixed(3) + ')'; g.lineWidth = 1.5; g.stroke();
+    }
+    /* photo, fondue dans le décor à gauche et en bas */
+    if (genImgs.photo) {
+      const im = genImgs.photo, off = document.createElement('canvas');
+      off.width = CW; off.height = CH;
+      const o = off.getContext('2d');
+      const bx = 200, by = 60, bw = 480, bh = 660;
+      const sc = Math.max(bw / im.width, bh / im.height) * gs.zoom;
+      const w = im.width * sc, hh = im.height * sc;
+      const x = bx + (bw - w) / 2 + gs.dx * bw * 0.5, y = by + (bh - hh) / 2 + gs.dy * bh * 0.5;
+      o.drawImage(im, x, y, w, hh);
+      o.globalCompositeOperation = 'destination-in';
+      const fx = o.createLinearGradient(bx, 0, bx + 150, 0);
+      fx.addColorStop(0, 'rgba(0,0,0,0)'); fx.addColorStop(1, 'rgba(0,0,0,1)');
+      o.fillStyle = fx; o.fillRect(0, 0, CW, CH);
+      const fy = o.createLinearGradient(0, by + bh - 210, 0, by + bh);
+      fy.addColorStop(0, 'rgba(0,0,0,1)'); fy.addColorStop(1, 'rgba(0,0,0,0)');
+      o.fillStyle = fy; o.fillRect(0, 0, CW, CH);
+      o.clearRect(0, by + bh, CW, CH);
+      g.drawImage(off, 0, 0);
+    }
+    /* voile sous le texte du bas */
+    const veil = g.createLinearGradient(0, 640, 0, 1000);
+    veil.addColorStop(0, 'rgba(18,30,50,0)'); veil.addColorStop(0.35, 'rgba(18,30,50,0.55)'); veil.addColorStop(1, 'rgba(18,30,50,0.75)');
+    g.fillStyle = veil; g.fillRect(0, 640, CW, 440);
+    g.restore();
+    /* cadre argenté */
+    const fr = g.createLinearGradient(0, 0, CW, CH);
+    fr.addColorStop(0, '#F4F8FC'); fr.addColorStop(0.3, '#AFC3D8'); fr.addColorStop(0.55, '#FFFFFF'); fr.addColorStop(0.8, '#9DB2C8'); fr.addColorStop(1, '#EEF3F8');
+    shieldPath(g); g.lineWidth = 22; g.strokeStyle = fr; g.stroke();
+    shieldPath(g, 26); g.lineWidth = 4; g.strokeStyle = 'rgba(255,255,255,0.85)'; g.stroke();
+    /* textes */
+    g.fillStyle = '#FFFFFF'; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    g.shadowColor = 'rgba(0,0,0,0.45)'; g.shadowBlur = 14;
+    fitFont(g, String(gs.rating), '700', 150, 230); g.fillText(String(gs.rating), 172, 250);
+    if (gs.nick) { fitFont(g, gs.nick.toUpperCase(), '700', 40, 230); g.fillText(gs.nick.toUpperCase(), 172, 302); }
+    g.shadowBlur = 0;
+    g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(112, 322, 120, 3);
+    let y = 330;
+    if (gs.flag) { g.font = '76px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'; g.fillStyle = '#FFFFFF'; g.fillText(gs.flag, 172, 416); y = 440; }
+    if (genImgs.badge) {
+      const cx = 172, cy = y + 78, r = 72, im = genImgs.badge, sc = Math.max(2 * r / im.width, 2 * r / im.height);
+      g.save(); g.beginPath(); g.arc(cx, cy, r, 0, 6.29); g.clip();
+      g.fillStyle = '#FFFFFF'; g.fillRect(cx - r, cy - r, 2 * r, 2 * r);
+      g.drawImage(im, cx - im.width * sc / 2, cy - im.height * sc / 2, im.width * sc, im.height * sc); g.restore();
+      g.beginPath(); g.arc(cx, cy, r, 0, 6.29); g.lineWidth = 5; g.strokeStyle = 'rgba(255,255,255,0.9)'; g.stroke();
+    }
+    g.fillStyle = '#FFFFFF'; g.shadowColor = 'rgba(0,0,0,0.5)'; g.shadowBlur = 16;
+    fitFont(g, gs.name, '700', 92, 520); g.fillText(gs.name, 360, 704);
+    g.shadowBlur = 0;
+    g.fillStyle = 'rgba(255,255,255,0.75)'; g.fillRect(110, 728, 500, 3); g.fillRect(358, 752, 3, 222);
+    gs.stats.forEach((st, i) => {
+      const col = i < 4 ? 0 : 1, row = i % 4, yy = 792 + row * 60;
+      const lx = col ? 404 : 148, vx = col ? 598 : 330;
+      g.font = '700 50px "Barlow Condensed", "Arial Narrow", Arial, sans-serif';
+      g.textAlign = 'left'; g.fillStyle = '#FFFFFF'; g.fillText(String(st.l).toUpperCase().slice(0, 4), lx, yy);
+      g.textAlign = 'right'; g.fillStyle = '#EBD6B4'; g.fillText(String(st.v), vx, yy);
+    });
+    g.textAlign = 'center';
+    if (genImgs.logo) g.drawImage(genImgs.logo, 340, 988, 40, 40);
+    g.restore();
+  }
+  let drawQueued = false;
+  function redraw() {
+    if (drawQueued) return;
+    drawQueued = true;
+    requestAnimationFrame(() => { drawQueued = false; const p = player(sheetId); if (p && gen) drawCard($('#gen-canvas'), p, gen); });
+  }
+  function fillGenForm() {
+    $('#gen-name').value = gen.name; $('#gen-nick').value = gen.nick; $('#gen-rating').value = gen.rating; $('#gen-flag').value = gen.flag;
+    $('#gen-zoom').value = gen.zoom; $('#gen-x').value = gen.dx; $('#gen-y').value = gen.dy;
+    const box = $('#gen-stats');
+    box.textContent = '';
+    gen.stats.forEach((st, i) => {
+      const l = h('input', { type: 'text', maxlength: '4', value: st.l, 'aria-label': 'Nom de la stat ' + (i + 1), class: 'gen-l' });
+      const v = h('input', { type: 'number', min: '1', max: '99', value: st.v, inputmode: 'numeric', 'aria-label': 'Valeur de ' + st.l, class: 'gen-v' });
+      l.addEventListener('input', () => { st.l = l.value.toUpperCase(); redraw(); });
+      v.addEventListener('input', () => { st.v = clamp(Math.round(Number(v.value)) || 0, 0, 99); redraw(); });
+      box.append(h('div', { class: 'gen-stat' }, l, v));
+    });
+    $('#gen-badge-clear').hidden = !genImgs.badge;
+    $('#gen-photo-pick').textContent = genImgs.photo ? 'Changer la photo' : 'Choisir la photo';
+    $('#gen-move').hidden = !genImgs.photo;
+  }
+  async function openGenerator() {
+    const id = sheetId, p = player(id);
+    if (!p || viewer) return;
+    let doc = cardCache.get(id);
+    if (!doc && p.card) { try { doc = await cardStore.get(id); } catch (e) { doc = null; } }
+    gen = doc && doc.gen ? JSON.parse(JSON.stringify(doc.gen)) : defaultGen(p);
+    genImgs.photo = await loadImg(doc && doc.photo);
+    genImgs.badge = await loadImg(doc && doc.badge);
+    genImgs.photoSrc = doc && doc.photo || null;
+    genImgs.badgeSrc = doc && doc.badge || null;
+    if (!genImgs.logo) genImgs.logo = await loadImg('ballon-192.png');
+    if (document.fonts && document.fonts.load) { try { await document.fonts.load('700 100px "Barlow Condensed"'); } catch (e) { /* police de secours */ } }
+    if (sheetId !== id) return;
+    $('#sheet-view').hidden = true;
+    $('#gen').hidden = false;
+    $('#card-status').textContent = '';
+    fillGenForm();
+    redraw();
+  }
+  function closeGenerator() {
+    gen = null;
+    $('#gen').hidden = true;
+    $('#sheet-view').hidden = false;
+  }
+  function shrinkTo(im, maxW, maxH, q) {
+    const sc = Math.min(1, maxW / im.width, maxH / im.height);
+    const c = document.createElement('canvas');
+    c.width = Math.round(im.width * sc); c.height = Math.round(im.height * sc);
+    const g = c.getContext('2d'); g.fillStyle = '#FFFFFF'; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', q);
+  }
+  async function pickGenImage(file, kind) {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const im = await loadImg(url);
+    URL.revokeObjectURL(url);
+    if (!im) { $('#card-status').textContent = 'Cette image n’a pas pu être lue.'; return; }
+    const src = kind === 'photo' ? shrinkTo(im, 900, 1200, 0.82) : shrinkTo(im, 300, 300, 0.85);
+    genImgs[kind] = await loadImg(src);
+    genImgs[kind + 'Src'] = src;
+    if (kind === 'photo') { gen.zoom = 1; gen.dx = 0; gen.dy = 0; }
+    fillGenForm();
+    redraw();
+  }
+  async function saveGenerated() {
+    const id = sheetId, p = player(id);
+    if (!p || !gen || viewer) return;
+    const st = $('#card-status');
+    const cv = $('#gen-canvas');
+    drawCard(cv, p, gen);
+    let q = 0.88, img = cv.toDataURL('image/jpeg', q);
+    while (img.length > 520000 && q > 0.45) { q -= 0.08; img = cv.toDataURL('image/jpeg', q); }
+    const doc = { img: img, gen: JSON.parse(JSON.stringify(gen)) };
+    if (genImgs.photoSrc) doc.photo = genImgs.photoSrc;
+    if (genImgs.badgeSrc) doc.badge = genImgs.badgeSrc;
+    if (JSON.stringify(doc).length > 950000) delete doc.photo;   /* limite d'un document : on garde au moins la carte */
+    st.textContent = 'Enregistrement de la carte…';
+    try { await cardStore.set(id, doc); } catch (e) {
+      st.textContent = e && e.code === 'permission-denied' ? 'Tu n’as pas le droit de modifier les cartes.' : 'La carte n’a pas pu être enregistrée. Vérifie ta connexion et réessaie.';
+      return;
+    }
+    cardCache.set(id, doc);
+    p.card = true;
+    persist();
+    renderAll();
+    closeGenerator();
+    if (sheetId === id) { await openCard(id); $('#card-status').textContent = 'Carte enregistrée.'; }
+  }
+
   function closeCard() {
+    if (gen) closeGenerator();
     $('#sheet').hidden = true;
     document.documentElement.classList.remove('sheet-open');
     sheetId = null;
@@ -831,11 +1057,11 @@
     let img;
     try { img = await shrinkImage(file); } catch (e) { st.textContent = 'Cette image n’a pas pu être lue. Essaie avec une capture d’écran de la carte.'; return; }
     st.textContent = 'Envoi de la carte…';
-    try { await cardStore.set(id, img); } catch (e) {
+    try { await cardStore.set(id, { img: img }); } catch (e) {
       st.textContent = e && e.code === 'permission-denied' ? 'Tu n’as pas le droit de modifier les cartes.' : 'La carte n’a pas pu être enregistrée. Vérifie ta connexion et réessaie.';
       return;
     }
-    cardCache.set(id, img);
+    cardCache.set(id, { img: img });
     p.card = true;
     persist();
     renderAll();
@@ -1353,6 +1579,16 @@
     document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && !$('#sheet').hidden) closeCard(); });
     $('#card-file').addEventListener('change', ev => { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; uploadCard(f); });
     $('#card-remove').addEventListener('click', removeCard);
+    FLAGS.forEach(f => $('#gen-flag').append(h('option', { value: f[0] }, (f[0] ? f[0] + ' ' : '') + f[1])));
+    $('#gen-open').addEventListener('click', openGenerator);
+    $('#gen-cancel').addEventListener('click', closeGenerator);
+    $('#gen-save').addEventListener('click', saveGenerated);
+    $('#gen-photo').addEventListener('change', ev => { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; pickGenImage(f, 'photo'); });
+    $('#gen-badge').addEventListener('change', ev => { const f = ev.target.files && ev.target.files[0]; ev.target.value = ''; pickGenImage(f, 'badge'); });
+    $('#gen-badge-clear').addEventListener('click', () => { genImgs.badge = null; genImgs.badgeSrc = null; fillGenForm(); redraw(); });
+    [['#gen-name', v => { gen.name = v.toUpperCase(); }], ['#gen-nick', v => { gen.nick = v; }], ['#gen-rating', v => { gen.rating = clamp(Math.round(Number(v)) || 0, 0, 99); }],
+      ['#gen-flag', v => { gen.flag = v; }], ['#gen-zoom', v => { gen.zoom = Number(v); }], ['#gen-x', v => { gen.dx = Number(v); }], ['#gen-y', v => { gen.dy = Number(v); }]]
+      .forEach(([sel, fn]) => $(sel).addEventListener('input', ev => { if (gen) { fn(ev.target.value); redraw(); } }));
     $('#sort').addEventListener('change', ev => { state.sort = ev.target.value; persist(); renderPlayers(); });
     $('#paste-open').addEventListener('click', () => {
       const panel = $('#paste-panel');

@@ -303,3 +303,19 @@ tr.first td:first-child { color: var(--gold); font-weight: 700; }
 }
 .sheet-tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .sheet-tags:empty { display: none; }
+
+/* Générateur de carte */
+.sheet-view, .gen { display: flex; flex-direction: column; gap: 12px; }
+#gen-canvas { display: block; width: 100%; max-width: 320px; height: auto; margin: 0 auto; border-radius: 10px; }
+.gen-move, .gen-fields { display: grid; gap: 10px; }
+.gen-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.gen-move label, .gen-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+.gen-move input[type="range"] { width: 100%; accent-color: var(--accent); }
+.gen-fields input, .gen-fields select, .gen-stat input {
+  min-height: 40px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); min-width: 0; width: 100%;
+}
+.gen-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.gen-stat { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px; }
+.gen-stat .gen-l { text-transform: uppercase; font-weight: 600; }
+.gen-stat .gen-v { font-variant-numeric: tabular-nums; }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }

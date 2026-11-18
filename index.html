@@ -174,12 +174,44 @@
       <h2 id="sheet-name"></h2>
       <button type="button" class="sbtn" id="sheet-close" aria-label="Fermer">×</button>
     </div>
-    <div class="sheet-card" id="sheet-card"></div>
-    <div class="sheet-tags" id="sheet-tags"></div>
-    <div class="tools edit-only">
-      <label class="btn small" for="card-file" id="card-pick">Ajouter une carte</label>
-      <input type="file" id="card-file" class="vh" accept="image/*">
-      <button type="button" class="btn small danger" id="card-remove">Retirer la carte</button>
+    <div class="sheet-view" id="sheet-view">
+      <div class="sheet-card" id="sheet-card"></div>
+      <div class="sheet-tags" id="sheet-tags"></div>
+      <div class="tools edit-only">
+        <button type="button" class="btn" id="gen-open">Créer la carte avec une photo</button>
+        <label class="btn small" for="card-file" id="card-pick">Importer une carte toute faite</label>
+        <input type="file" id="card-file" class="vh" accept="image/*">
+        <button type="button" class="btn small danger" id="card-remove">Retirer la carte</button>
+      </div>
+    </div>
+    <div class="gen" id="gen" hidden>
+      <canvas id="gen-canvas" width="720" height="1080" aria-label="Aperçu de la carte"></canvas>
+      <div class="tools">
+        <label class="btn" for="gen-photo" id="gen-photo-pick">Choisir la photo</label>
+        <input type="file" id="gen-photo" class="vh" accept="image/*">
+      </div>
+      <div class="gen-move" id="gen-move" hidden>
+        <label for="gen-zoom">Zoom <input type="range" id="gen-zoom" min="1" max="3" step="0.02"></label>
+        <label for="gen-x">Gauche – droite <input type="range" id="gen-x" min="-1" max="1" step="0.01"></label>
+        <label for="gen-y">Haut – bas <input type="range" id="gen-y" min="-1" max="1" step="0.01"></label>
+      </div>
+      <div class="gen-fields">
+        <label for="gen-name">Nom sur la carte <input type="text" id="gen-name" maxlength="14" autocomplete="off"></label>
+        <label for="gen-nick">Surnom <input type="text" id="gen-nick" maxlength="16" autocomplete="off" placeholder="Le boucher"></label>
+        <label for="gen-rating">Note <input type="number" id="gen-rating" min="1" max="99" inputmode="numeric"></label>
+        <label for="gen-flag">Pays <select id="gen-flag"></select></label>
+      </div>
+      <div class="tools">
+        <label class="btn small" for="gen-badge">Écusson (facultatif)</label>
+        <input type="file" id="gen-badge" class="vh" accept="image/*">
+        <button type="button" class="btn small" id="gen-badge-clear" hidden>Retirer l’écusson</button>
+      </div>
+      <p class="legend">Stats : le nom (3 lettres) et la valeur, modifiables.</p>
+      <div class="gen-stats" id="gen-stats"></div>
+      <div class="tools">
+        <button type="button" class="btn primary" id="gen-save">Enregistrer la carte</button>
+        <button type="button" class="btn small" id="gen-cancel">Annuler</button>
+      </div>
     </div>
     <p class="status" id="card-status" aria-live="polite"></p>
   </div>
