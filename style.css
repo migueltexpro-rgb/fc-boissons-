@@ -81,6 +81,20 @@ h2 {
   padding: 4px 6px 4px 12px; min-height: 52px;
 }
 .row + .row { border-top: 1px solid var(--line); }
+.prof { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 0 8px 6px; min-width: 0; }
+.tag {
+  display: inline-flex; align-items: center; min-height: 26px; padding: 2px 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; line-height: 1.2; border: 1px solid transparent;
+  background: var(--soft); color: var(--fg);
+}
+.tag-passeur { --t: #2F6FD0; } .tag-attaquant { --t: #CF3434; } .tag-sprinter { --t: #B7860B; } .tag-cardio { --t: #6B5B95; }
+span.tag, .tag[aria-pressed="true"] { background: color-mix(in srgb, var(--t) 16%, var(--surface)); color: var(--fg); border-color: color-mix(in srgb, var(--t) 55%, transparent); }
+button.tag { cursor: pointer; min-height: 34px; border-color: var(--line); background: var(--surface); color: var(--muted); }
+button.tag[aria-pressed="true"] { color: var(--fg); }
+.tag-edit { border: 0; background: transparent; color: var(--accent); font-weight: 600; font-size: 14px; cursor: pointer; padding: 4px 6px; min-height: 30px; }
+.team li .who { min-width: 0; overflow-wrap: anywhere; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.team li .who .tag { min-height: 20px; padding: 0 7px; font-size: 11px; }
+.team .mix { padding: 6px 14px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); }
 .chk { width: 22px; height: 22px; accent-color: var(--accent); margin: 0; cursor: pointer; }
 .nm {
   min-width: 0; width: 100%; min-height: 40px; padding: 4px 8px; background: transparent;
@@ -152,7 +166,7 @@ h2 {
 .team ul { list-style: none; margin: 0; padding: 0; }
 .team li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 14px; font-weight: 500; }
 .team li + li { border-top: 1px solid var(--line); }
-.team li span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.team li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .team li .n { font-family: var(--display); font-weight: 700; font-size: 20px; line-height: 1.2; font-variant-numeric: tabular-nums; color: var(--muted); }
 .team footer { padding: 8px 14px; background: var(--soft); color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 .levels-off .n, .levels-off footer { display: none; }

@@ -21,7 +21,31 @@
       return s + c * (c - 1) / 2;
     }, 0);
   }
-  function costOf(teams) { return spreadOf(teams) + 10 * tensPairs(teams); }
+  /* Profils de jeu : en plus de la note, le tirage répartit chaque profil entre les équipes. */
+  const TAGS = [
+    { id: 'passeur', label: 'Passeur', plural: 'passeurs' },
+    { id: 'attaquant', label: 'Attaquant', plural: 'attaquants' },
+    { id: 'sprinter', label: 'Sprinter', plural: 'sprinters' },
+    { id: 'cardio', label: 'Pas de cardio', plural: 'sans cardio' }
+  ];
+  const TAG_IDS = TAGS.map(t => t.id);
+  const cleanTags = v => (Array.isArray(v) ? TAG_IDS.filter(id => v.includes(id)) : []);
+  const tagSig = p => (p.tags || []).join(',');
+  /* Écart de chaque profil entre l'équipe qui en a le plus et celle qui en a le moins, au-delà de l'inévitable. */
+  function profileGap(teams) {
+    let gap = 0;
+    TAG_IDS.forEach(id => {
+      const c = teams.map(t => t.filter(p => p.tags && p.tags.includes(id)).length);
+      const total = c.reduce((a, b) => a + b, 0);
+      if (!total) return;
+      const floor = total % teams.length ? 1 : 0;
+      gap += Math.max(0, Math.max.apply(null, c) - Math.min.apply(null, c) - floor);
+    });
+    return gap;
+  }
+  /* La note reste prioritaire : un profil mal réparti pèse comme 0,3 point d'écart de moyenne. */
+  const PROFILE_WEIGHT = 0.3;
+  function costOf(teams) { return spreadOf(teams) + 10 * tensPairs(teams) + PROFILE_WEIGHT * profileGap(teams); }
   function improve(teams) {
     let cur = costOf(teams), changed = true, guard = 0;
     while (changed && guard++ < 200) {
@@ -32,7 +56,7 @@
           for (let i = 0; i < teams[a].length; i++) {
             for (let j = 0; j < teams[b].length; j++) {
               const x = teams[a][i], y = teams[b][j];
-              if (x.level === y.level) continue;
+              if (x.level === y.level && tagSig(x) === tagSig(y)) continue;
               teams[a][i] = y; teams[b][j] = x;
               const s = costOf(teams);
               if (s < cur - 1e-9) { cur = s; changed = true; break outer; }
@@ -68,7 +92,7 @@
     const list = fresh.length ? fresh : good;
     const pick = list[Math.floor(Math.random() * list.length)];
     const teams = shuffle(pick.teams).map(t => t.slice().sort((a, b) => b.level - a.level || a.name.localeCompare(b.name, 'fr')));
-    return { teams: teams, spread: spreadOf(pick.teams), sig: pick.sig, warn: tensPairs(pick.teams) > 0 };
+    return { teams: teams, spread: spreadOf(pick.teams), sig: pick.sig, warn: tensPairs(pick.teams) > 0, gap: profileGap(pick.teams) };
   }
 
   /* ================= Classement ================= */
@@ -197,7 +221,7 @@
     try {
       const s = JSON.parse(localStorage.getItem(LS_KEY));
       if (s && typeof s === 'object') {
-        if (Array.isArray(s.players)) state.players = s.players.filter(p => p && p.id).map(p => { p.pts = cleanPts(p.pts, p.bonus); delete p.bonus; return p; });
+        if (Array.isArray(s.players)) state.players = s.players.filter(p => p && p.id).map(p => { p.pts = cleanPts(p.pts, p.bonus); p.tags = cleanTags(p.tags); delete p.bonus; return p; });
         state.period = cleanPeriod(s.period);
         if (Array.isArray(s.matches)) state.matches = s.matches.filter(validMatch);
         if (s.draw && Array.isArray(s.draw.teams)) state.draw = s.draw;
@@ -242,6 +266,7 @@
     const m = new Map();
     if (c === 'players') state.players.forEach(p => {
       const d = { name: p.name, level: p.level, present: !!p.present };
+      if (p.tags && p.tags.length) d.tags = p.tags;
       if (p.pts && Object.keys(p.pts).length) d.pts = p.pts;
       m.set(p.id, d);
     });
@@ -254,7 +279,7 @@
   }
   function applyDocs(c, m) {
     if (c === 'players') {
-      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present, pts: cleanPts(d.pts, d.bonus) }));
+      state.players = [...m].map(([id, d]) => ({ id: id, name: String(d.name || '?').slice(0, 30), level: clamp(Math.round(Number(d.level)) || 5, 1, 10), present: !!d.present, pts: cleanPts(d.pts, d.bonus), tags: cleanTags(d.tags) }));
     } else if (c === 'matches') {
       state.matches = [...m].map(([id, d]) => Object.assign(clone(d), { id: id })).filter(validMatch)
         .sort((a, b) => String(a.date).localeCompare(String(b.date)));
@@ -446,7 +471,8 @@
     const dec = h('button', { type: 'button', class: 'sbtn' }, '−');
     const inc = h('button', { type: 'button', class: 'sbtn' }, '+');
     const del = h('button', { type: 'button', class: 'sbtn del' }, '×');
-    const el = h('li', { class: 'row' }, cb, nameIn, h('div', { class: 'step' }, dec, val, inc), del);
+    const prof = h('div', { class: 'prof' });
+    const el = h('li', { class: 'row' }, cb, nameIn, h('div', { class: 'step' }, dec, val, inc), del, prof);
     cb.addEventListener('change', () => {
       player(id).present = cb.checked;
       persist();
@@ -471,6 +497,20 @@
       val.textContent = next;
       renderSummary();
     };
+    prof.addEventListener('click', ev => {
+      const b = ev.target.closest('button');
+      if (!b) return;
+      const p = player(id);
+      if (b.dataset.tag) {
+        const on = (p.tags || []).includes(b.dataset.tag);
+        p.tags = cleanTags(on ? p.tags.filter(t => t !== b.dataset.tag) : (p.tags || []).concat(b.dataset.tag));
+        persist();
+        renderSummary();
+      } else {
+        editing = editing === id ? null : id;
+      }
+      renderProfile(rows.get(id), p);
+    });
     dec.addEventListener('click', () => bump(-1));
     inc.addEventListener('click', () => bump(1));
     del.addEventListener('click', () => {
@@ -479,7 +519,7 @@
       renderPlayers();
       renderSummary();
     });
-    return { el: el, cb: cb, nameIn: nameIn, val: val, dec: dec, inc: inc, del: del };
+    return { el: el, cb: cb, nameIn: nameIn, val: val, dec: dec, inc: inc, del: del, prof: prof };
   }
 
   /* Tri de la liste. L'ordre ne bouge pas pendant qu'on coche (ni quand un autre appareil modifie) :
@@ -511,6 +551,23 @@
     }
     return state.players.slice().sort((a, b) => cmp(a, b, played, rank) || a.name.localeCompare(b.name, 'fr'));
   }
+  /* Profils d'un joueur : badges des profils choisis, ou les 4 boutons quand on modifie. */
+  let editing = null;
+  function renderProfile(r, p) {
+    const tags = p.tags || [];
+    const open = editing === p.id;
+    const sig = (open ? 'e:' : 'v:') + tags.join(',') + ':' + p.name;
+    if (r.prof.dataset.sig === sig) return;
+    r.prof.dataset.sig = sig;
+    r.prof.textContent = '';
+    if (open) {
+      TAGS.forEach(t => r.prof.append(h('button', { type: 'button', class: 'tag tag-' + t.id, 'data-tag': t.id, 'aria-pressed': String(tags.includes(t.id)) }, t.label)));
+      r.prof.append(h('button', { type: 'button', class: 'tag-edit' }, 'OK'));
+    } else {
+      tags.forEach(id => { const t = TAGS.find(x => x.id === id); r.prof.append(h('span', { class: 'tag tag-' + id }, t.label)); });
+      r.prof.append(h('button', { type: 'button', class: 'tag-edit', 'aria-label': 'Profil de ' + p.name }, tags.length ? 'Modifier' : '+ Profil'));
+    }
+  }
   function renderPlayers(keepOrder) {
     const arr = sortedPlayers(keepOrder);
     orderCache = arr.map(p => p.id);
@@ -528,6 +585,7 @@
       r.el.classList.toggle('off', !p.present);
       if (document.activeElement !== r.nameIn) r.nameIn.value = p.name;
       r.val.textContent = p.level;
+      renderProfile(r, p);
       r.cb.setAttribute('aria-label', 'Présent : ' + p.name);
       r.dec.setAttribute('aria-label', 'Baisser la note de ' + p.name);
       r.inc.setAttribute('aria-label', 'Monter la note de ' + p.name);
@@ -611,7 +669,7 @@
       const row = h('div', { class: 'paste-row' }, h('span', null, '« ' + label + ' » : introuvable.'));
       const b = h('button', { type: 'button', class: 'btn small' }, 'Ajouter comme nouveau joueur');
       b.addEventListener('click', () => {
-        state.players.push({ id: newId('p'), name: label, level: 5, present: true, pts: {} });
+        state.players.push({ id: newId('p'), name: label, level: 5, present: true, pts: {}, tags: [] });
         persist(); renderPlayers(); renderSummary();
         row.textContent = ''; row.append(h('span', null, label + ' ajouté avec la note 5.'));
       });
@@ -622,7 +680,7 @@
 
   /* ================= Tirage ================= */
   function poolNow() { return state.players.filter(p => p.present); }
-  function keyFor(pool, k) { return pool.map(p => p.id + ':' + p.level).sort().join(',') + '|' + k; }
+  function keyFor(pool, k) { return pool.map(p => p.id + ':' + p.level + ':' + tagSig(p)).sort().join(',') + '|' + k; }
 
   function renderSummary() {
     const pool = poolNow();
@@ -651,6 +709,11 @@
     if (stale) stale.hidden = !state.draw || state.draw.key === keyFor(pool, k);
   }
 
+  function mixOf(team) {
+    const parts = TAGS.map(t => ({ t: t, n: team.filter(p => cleanTags(p.tags).includes(t.id)).length })).filter(x => x.n)
+      .map(x => x.n + ' ' + (x.n > 1 ? x.t.plural : x.t.label.toLowerCase()));
+    return parts.length ? h('p', { class: 'mix' }, parts.join(' · ')) : null;
+  }
   function renderDraw() {
     const box = $('#result');
     const draw = state.draw;
@@ -667,13 +730,19 @@
     if (draw.warn) {
       kids.push(h('p', { class: 'note' }, 'Il y a plus de joueurs à 10 que d’équipes : impossible d’éviter que deux 10/10 se retrouvent ensemble.'));
     }
+    if (draw.gap > 0) {
+      kids.push(h('p', { class: 'note' }, 'Les profils ne sont pas parfaitement répartis : équilibrer les notes passe avant. Relance le tirage pour une autre proposition.'));
+    }
     kids.push(h('p', { class: 'note', id: 'stale', hidden: true }, 'La liste ou le nombre d’équipes a changé depuis ce tirage. Relance le tirage pour le mettre à jour.'));
     const grid = h('div', { class: 'teams' + (state.showLevels ? '' : ' levels-off') });
     draw.teams.forEach((t, i) => {
       const total = t.reduce((s, p) => s + p.level, 0);
       grid.append(paint(h('article', { class: 'team' },
         h('header', null, h('h3', null, BIBS[i].name), h('span', null, t.length + ' joueurs')),
-        h('ul', null, t.map(p => h('li', null, h('span', null, p.name), h('span', { class: 'n' }, p.level)))),
+        h('ul', null, t.map(p => h('li', null,
+          h('span', { class: 'who' }, p.name, cleanTags(p.tags).map(id => h('span', { class: 'tag tag-' + id }, TAGS.find(x => x.id === id).label))),
+          h('span', { class: 'n' }, p.level)))),
+        mixOf(t),
         h('footer', null, 'Total ' + total + ' · moyenne ' + fmt(total / t.length))
       ), i));
     });
@@ -714,8 +783,8 @@
     const pool = poolNow();
     const k = state.k;
     if (pool.length < 2 * k) return;
-    const r = generate(pool.map(p => ({ id: p.id, name: p.name, level: p.level })), k, state.draw ? state.draw.sig : null);
-    state.draw = { teams: r.teams, spread: r.spread, sig: r.sig, warn: r.warn, key: keyFor(pool, k), recorded: null, vote: null };
+    const r = generate(pool.map(p => ({ id: p.id, name: p.name, level: p.level, tags: cleanTags(p.tags) })), k, state.draw ? state.draw.sig : null);
+    state.draw = { teams: r.teams, spread: r.spread, sig: r.sig, warn: r.warn, gap: r.gap, key: keyFor(pool, k), recorded: null, vote: null };
     persist();
     renderDraw();
     renderSummary();
@@ -1073,7 +1142,7 @@
     let np = 0, nm = 0;
     d.players.forEach(p => {
       if (!p || !idOk(p.id)) return;
-      players.set(p.id, { id: p.id, name: String(p.name || '?').slice(0, 30), level: clamp(Math.round(Number(p.level)) || 5, 1, 10), present: !!p.present, pts: cleanPts(p.pts, p.bonus) });
+      players.set(p.id, { id: p.id, name: String(p.name || '?').slice(0, 30), level: clamp(Math.round(Number(p.level)) || 5, 1, 10), present: !!p.present, pts: cleanPts(p.pts, p.bonus), tags: cleanTags(p.tags) });
       np++;
     });
     const matches = new Map(state.matches.map(m => [m.id, m]));
@@ -1120,7 +1189,7 @@
       const input = $('#new-name');
       const name = input.value.trim();
       if (!name) return;
-      state.players.push({ id: newId('p'), name: name, level: Number(sel.value), present: true, pts: {} });
+      state.players.push({ id: newId('p'), name: name, level: Number(sel.value), present: true, pts: {}, tags: [] });
       persist();
       renderPlayers();
       renderSummary();
