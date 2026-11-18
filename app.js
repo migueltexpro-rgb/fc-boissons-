@@ -26,6 +26,9 @@
     { id: 'passeur', label: 'Passeur', plural: 'passeurs' },
     { id: 'attaquant', label: 'Attaquant', plural: 'attaquants' },
     { id: 'defenseur', label: 'Défenseur', plural: 'défenseurs' },
+    { id: 'physique', label: 'Physique', plural: 'physiques' },
+    { id: 'conducteur', label: 'Conducteur de ballon', plural: 'conducteurs de ballon' },
+    { id: 'dribbleur', label: 'Dribbleur', plural: 'dribbleurs' },
     { id: 'sprinter', label: 'Sprinter', plural: 'sprinters' },
     { id: 'endurant', label: 'Cardio', plural: 'cardio' },
     { id: 'cardio', label: 'Pas de cardio', plural: 'sans cardio' }
