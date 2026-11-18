@@ -88,6 +88,7 @@ h2 {
   background: var(--soft); color: var(--fg);
 }
 .tag-passeur { --t: #2F6FD0; } .tag-attaquant { --t: #CF3434; } .tag-sprinter { --t: #B7860B; } .tag-cardio { --t: #6B5B95; }
+.tag-defenseur { --t: #0F7C86; } .tag-endurant { --t: #2E9E5B; }
 span.tag, .tag[aria-pressed="true"] { background: color-mix(in srgb, var(--t) 16%, var(--surface)); color: var(--fg); border-color: color-mix(in srgb, var(--t) 55%, transparent); }
 button.tag { cursor: pointer; min-height: 34px; border-color: var(--line); background: var(--surface); color: var(--muted); }
 button.tag[aria-pressed="true"] { color: var(--fg); }

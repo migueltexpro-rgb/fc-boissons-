@@ -25,9 +25,13 @@
   const TAGS = [
     { id: 'passeur', label: 'Passeur', plural: 'passeurs' },
     { id: 'attaquant', label: 'Attaquant', plural: 'attaquants' },
+    { id: 'defenseur', label: 'Défenseur', plural: 'défenseurs' },
     { id: 'sprinter', label: 'Sprinter', plural: 'sprinters' },
+    { id: 'endurant', label: 'Cardio', plural: 'cardio' },
     { id: 'cardio', label: 'Pas de cardio', plural: 'sans cardio' }
   ];
+  /* « Cardio » et « Pas de cardio » s'excluent : choisir l'un retire l'autre. */
+  const TAG_OPPOSITE = { endurant: 'cardio', cardio: 'endurant' };
   const TAG_IDS = TAGS.map(t => t.id);
   const cleanTags = v => (Array.isArray(v) ? TAG_IDS.filter(id => v.includes(id)) : []);
   const tagSig = p => (p.tags || []).join(',');
@@ -503,7 +507,8 @@
       const p = player(id);
       if (b.dataset.tag) {
         const on = (p.tags || []).includes(b.dataset.tag);
-        p.tags = cleanTags(on ? p.tags.filter(t => t !== b.dataset.tag) : (p.tags || []).concat(b.dataset.tag));
+        const t = b.dataset.tag;
+        p.tags = cleanTags(on ? p.tags.filter(x => x !== t) : (p.tags || []).filter(x => x !== TAG_OPPOSITE[t]).concat(t));
         persist();
         renderSummary();
       } else {
